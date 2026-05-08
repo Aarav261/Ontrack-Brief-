@@ -15,6 +15,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from flask import Flask, redirect, render_template, request, url_for
+from flask_cors import CORS
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -30,6 +31,7 @@ log = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+CORS(app, resources={r"/refresh-token": {"origins": "*"}})
 
 scheduler = BackgroundScheduler(daemon=True)
 
