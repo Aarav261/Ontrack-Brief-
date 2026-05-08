@@ -27,6 +27,13 @@ chrome.webRequest.onSendHeaders.addListener(
     seen.token    = token;
     seen.username = username;
 
+    // Store in chrome.storage so popup.js can read them
+    chrome.storage.local.set({
+      auth_token: token,
+      username:   username,
+      base_url:   new URL(details.url).origin,
+    });
+
     fetch(`${APP_URL}/refresh-token`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
