@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import json
+import logging
 import pathlib
 import subprocess
 import sys
 from datetime import date
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+log = logging.getLogger(__name__)
+
+# Shared HTTP session with automatic retry on transient errors
+_http = requests.Session()
+_retry = Retry(total=3, backoff_factor=0.5, status_forcelist={429, 500, 502, 503, 504})
+_http.mount("https://", HTTPAdapter(max_retries=_retry))
+_http.mount("http://", HTTPAdapter(max_retries=_retry))
 
 
 # ---------------------------------------------------------------------------
@@ -19,31 +30,61 @@ def _headers(auth_token: str, username: str) -> dict:
     return {"Username": username, "Auth-Token": auth_token, "Accept": "application/json"}
 
 
-def validate_token(base_url: str, auth_token: str, username: str) -> bool:
+class TokenExpiredError(Exception):
+    """Raised when the OnTrack API rejects credentials (401/419)."""
+
+
+def validate_token(base_url: str, auth_token: str, username: str) -> tuple[bool, str]:
+    """Return (is_valid, current_token).
+
+    Doubtfire rotates auth_token on each request and returns the new value
+    in the Auth-Token response header.  We capture it so the DB stays fresh.
+    """
     try:
-        r = requests.get(
+        r = _http.get(
             f"{base_url}/api/unit_roles",
             headers=_headers(auth_token, username),
             timeout=10,
         )
-        return r.status_code == 200
+        if r.status_code != 200:
+            return False, auth_token
+        refreshed = (
+            r.headers.get("Auth-Token")
+            or r.headers.get("auth-token")
+            or r.headers.get("x-auth-token")
+            or auth_token
+        )
+        log.debug("validate_token: stored=%s…  refreshed=%s…", auth_token[-6:], refreshed[-6:])
+        return True, refreshed
     except requests.RequestException:
-        return False
+        return False, auth_token
 
 
-def fetch_active_projects_direct(base_url: str, auth_token: str, username: str) -> list[dict]:
-    r = requests.get(
+def fetch_active_projects_direct(
+    base_url: str, auth_token: str, username: str
+) -> tuple[list[dict], str]:
+    """Return (projects, current_token) — token may be refreshed by the server."""
+    r = _http.get(
         f"{base_url}/api/projects",
         headers=_headers(auth_token, username),
         timeout=15,
     )
+    if r.status_code in (401, 419):
+        raise TokenExpiredError(f"OnTrack rejected credentials (HTTP {r.status_code})")
     r.raise_for_status()
+    refreshed = (
+        r.headers.get("Auth-Token")
+        or r.headers.get("auth-token")
+        or r.headers.get("x-auth-token")
+        or auth_token
+    )
     today = date.today()
-    return [p for p in r.json() if date.fromisoformat(p["unit"]["end_date"]) >= today]
+    projects = [p for p in r.json() if date.fromisoformat(p["unit"]["end_date"]) >= today]
+    return projects, refreshed
 
 
 def fetch_tasks_direct(base_url: str, auth_token: str, username: str, project_id: int) -> list[dict]:
-    r = requests.get(
+    r = _http.get(
         f"{base_url}/api/projects/{project_id}",
         headers=_headers(auth_token, username),
         timeout=15,
@@ -52,24 +93,39 @@ def fetch_tasks_direct(base_url: str, auth_token: str, username: str, project_id
     data  = r.json()
     tasks = data.get("tasks", [])
 
-    td_by_id = {
-        td["id"]: td
-        for td in data.get("unit", {}).get("task_definitions", [])
-    }
+    # task_definitions are not embedded in the project response — fetch the full unit separately
+    # (mirrors what ontrack-cli does: get_project() + get_unit(item.unit.id))
+    unit_id = data.get("unit_id") or (data.get("unit") or {}).get("id")
+    task_defs = []
+    if unit_id:
+        try:
+            unit_r = _http.get(
+                f"{base_url}/api/units/{unit_id}",
+                headers=_headers(auth_token, username),
+                timeout=15,
+            )
+            unit_r.raise_for_status()
+            task_defs = unit_r.json().get("task_definitions", [])
+        except requests.RequestException as exc:
+            log.warning("Could not fetch unit %s for task_definitions: %s", unit_id, exc)
+    else:
+        log.warning("No unit_id found in project %s response — task names will be blank", project_id)
+
+    td_by_id = {td["id"]: td for td in task_defs}
     for t in tasks:
         td = td_by_id.get(t["task_definition_id"], {})
-        t.setdefault("abbreviation",       td.get("abbreviation", ""))
-        t.setdefault("name",               td.get("name", ""))
-        t.setdefault("target_grade",       td.get("target_grade"))
-        t.setdefault("target_grade_label", _GRADE_LABELS.get(td.get("target_grade"), "P (Pass)"))
-        t.setdefault("due_date",           t.get("due_date") or td.get("target_date") or td.get("due_date"))
-        t.setdefault("deadline",           td.get("due_date"))
-        t.setdefault("status_label",       t.get("status", "").replace("_", " ").title())
+        t["abbreviation"]       = t.get("abbreviation") or td.get("abbreviation", "")
+        t["name"]               = t.get("name") or td.get("name", "")
+        t["target_grade"]       = t.get("target_grade") if t.get("target_grade") is not None else td.get("target_grade")
+        t["target_grade_label"] = _GRADE_LABELS.get(t["target_grade"], "P (Pass)")
+        t["due_date"]           = t.get("due_date") or td.get("target_date") or td.get("due_date")
+        t["deadline"]           = t.get("deadline") or td.get("due_date")
+        t["status_label"]       = t.get("status_label") or t.get("status", "").replace("_", " ").title()
 
     submitted_def_ids = {t["task_definition_id"] for t in tasks}
     today = date.today().isoformat()
 
-    for td in data.get("unit", {}).get("task_definitions", []):
+    for td in task_defs:
         if td["id"] in submitted_def_ids:
             continue
         if td.get("start_date", "0000") > today:
@@ -105,9 +161,10 @@ def fetch_last_feedback_direct(
 ) -> str | None:
     url = f"{base_url}/api/projects/{project_id}/task_def_id/{task_def_id}/comments"
     try:
-        r = requests.get(url, headers=_headers(auth_token, username), timeout=10)
+        r = _http.get(url, headers=_headers(auth_token, username), timeout=10)
         r.raise_for_status()
-    except requests.RequestException:
+    except requests.RequestException as exc:
+        log.warning("Could not fetch feedback for task_def %s: %s", task_def_id, exc)
         return None
 
     comments = r.json()
@@ -217,8 +274,8 @@ def fetch_task_sheet(unit_id: int, task_def_id: int) -> bytes | None:
     url = f"{base_url}/api/units/{unit_id}/task_definitions/{task_def_id}/task_pdf.json"
 
     try:
-        r = requests.get(url, headers={**headers, "Accept": "*/*"},
-                         params={"as_attachment": "true"}, timeout=15)
+        r = _http.get(url, headers={**headers, "Accept": "*/*"},
+                      params={"as_attachment": "true"}, timeout=15)
         r.raise_for_status()
     except requests.RequestException:
         return None
@@ -234,8 +291,8 @@ def fetch_submission(project_id: int, task_def_id: int) -> tuple[bytes, str] | N
     url = f"{base_url}/api/projects/{project_id}/task_def_id/{task_def_id}/submission"
 
     try:
-        r = requests.get(url, headers={**headers, "Accept": "*/*"},
-                         params={"as_attachment": "true"}, timeout=15)
+        r = _http.get(url, headers={**headers, "Accept": "*/*"},
+                      params={"as_attachment": "true"}, timeout=15)
         r.raise_for_status()
     except requests.RequestException:
         return None
@@ -254,9 +311,10 @@ def fetch_last_feedback(project_id: int, task_def_id: int) -> str | None:
     url = f"{base_url}/api/projects/{project_id}/task_def_id/{task_def_id}/comments"
 
     try:
-        r = requests.get(url, headers=headers, timeout=10)
+        r = _http.get(url, headers=headers, timeout=10)
         r.raise_for_status()
-    except requests.RequestException:
+    except requests.RequestException as exc:
+        log.warning("Could not fetch feedback for task_def %s: %s", task_def_id, exc)
         return None
 
     comments = r.json()

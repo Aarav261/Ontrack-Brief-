@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import configparser
+import logging
+import os
+import secrets
 import sys
-import threading
 import urllib.parse
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 from flask import Flask, redirect, render_template, request, url_for
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -18,12 +21,15 @@ sys.path.insert(0, str(Path(__file__).parent))
 from builder import build_brief_direct
 from constants import CONFIG_PATH
 from db import get_all_users, init_db, remove_user, upsert_user
-from fetcher import fetch_active_projects_direct, validate_token
-from mailer import send_brief_to
+from fetcher import fetch_active_projects_direct, validate_token, TokenExpiredError
+from mailer import send_brief_to, send_reauth_email
 from renderer import render_html
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger(__name__)
+
 app = Flask(__name__)
-app.secret_key = "ontracker-change-in-prod"
+app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 
 scheduler = BackgroundScheduler(daemon=True)
 
@@ -32,18 +38,32 @@ scheduler = BackgroundScheduler(daemon=True)
 # Brief runner (called by scheduler)
 # ---------------------------------------------------------------------------
 
-def _run_brief(base_url: str, auth_token: str, username: str, email: str) -> None:
+def _run_brief(base_url: str, auth_token: str, username: str, email: str,
+               user_id: int | None = None) -> None:
     try:
-        projects = fetch_active_projects_direct(base_url, auth_token, username)
+        projects, fresh_token = fetch_active_projects_direct(base_url, auth_token, username)
+        if fresh_token != auth_token:
+            log.info("Token rotated for %s — updating DB", username)
+            upsert_user(base_url, username, fresh_token, email)
         if not projects:
             return
-        brief = build_brief_direct(base_url, auth_token, username, projects)
+        brief = build_brief_direct(base_url, fresh_token, username, projects)
         html  = render_html(brief, projects, date.today())
         cfg   = configparser.ConfigParser()
         cfg.read(CONFIG_PATH)
         send_brief_to(html, email, date.today(), cfg)
+    except TokenExpiredError:
+        log.warning("Token expired for %s — cancelling job and notifying", email)
+        if user_id is not None:
+            job_id = f"brief_{user_id}"
+            if scheduler.get_job(job_id):
+                scheduler.remove_job(job_id)
+        cfg = configparser.ConfigParser()
+        cfg.read(CONFIG_PATH)
+        app_url = os.environ.get("APP_URL", "http://localhost:5001/")
+        send_reauth_email(email, app_url, cfg)
     except Exception as exc:
-        print(f"[brief error] {email}: {exc}")
+        log.error("Brief generation failed for %s: %s", email, exc, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -58,8 +78,9 @@ def _schedule(user_id: int, base_url: str, auth_token: str, username: str,
     scheduler.add_job(
         _run_brief,
         CronTrigger(day_of_week="mon-fri", hour=brief_hour, minute=0),
-        args=[base_url, auth_token, username, email],
+        args=[base_url, auth_token, username, email, user_id],
         id=job_id,
+        misfire_grace_time=3600,
     )
 
 
@@ -160,9 +181,10 @@ def setup():
     username   = request.form["username"].strip()
     auth_token = request.form["auth_token"].strip()
     email      = request.form["email"].strip()
-    brief_hour = int(request.form.get("brief_hour", 8))
+    brief_hour = max(0, min(23, int(request.form.get("brief_hour", 8))))
 
-    if not validate_token(base_url, auth_token, username):
+    valid, auth_token = validate_token(base_url, auth_token, username)
+    if not valid:
         error = "Could not verify your OnTrack token. Check your details and try again."
         bm = _bookmarklet(request.url_root)
         return render_template(
@@ -177,11 +199,15 @@ def setup():
     user_id = upsert_user(base_url, username, auth_token, email, brief_hour)
     _schedule(user_id, base_url, auth_token, username, email, brief_hour)
 
-    threading.Thread(
-        target=_run_brief,
-        args=[base_url, auth_token, username, email],
-        daemon=True,
-    ).start()
+    # Send a first brief 2 minutes after sign-up via the scheduler (tests the scheduler path)
+    scheduler.add_job(
+        _run_brief,
+        DateTrigger(run_date=datetime.now() + timedelta(seconds=10)),
+        args=[base_url, auth_token, username, email, user_id],
+        id=f"welcome_{user_id}",
+        replace_existing=True,
+    )
+    log.info("First brief for %s scheduled in 2 minutes", email)
 
     return render_template("success.html", email=email, hour=brief_hour)
 
@@ -204,9 +230,19 @@ def unsubscribe(email: str):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    init_db()
-    for user in get_all_users():
-        _schedule(user["id"], user["base_url"], user["auth_token"],
-                  user["username"], user["email"], user["brief_hour"])
+    try:
+        init_db()
+    except Exception as exc:
+        log.error("Database initialisation failed: %s", exc, exc_info=True)
+        sys.exit(1)
+
+    try:
+        for user in get_all_users():
+            _schedule(user["id"], user["base_url"], user["auth_token"],
+                      user["username"], user["email"], user["brief_hour"])
+    except Exception as exc:
+        log.error("Failed to restore scheduled jobs: %s", exc, exc_info=True)
+
     scheduler.start()
-    app.run(debug=False, host="0.0.0.0", port=5001)
+    port = int(os.environ.get("PORT", 5001))
+    app.run(debug=False, host="0.0.0.0", port=port)

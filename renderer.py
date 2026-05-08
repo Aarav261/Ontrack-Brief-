@@ -37,9 +37,32 @@ _ACCENT_BORDER = {
 }
 
 
+_ALREADY_SUBMITTED = frozenset({"ready_for_feedback", "discuss", "demonstrate", "complete", "fail"})
+
+
 def _deadline_html(task: dict, today: date) -> str:
-    days = (date.fromisoformat(task["due_date"]) - today).days
-    if days < 0:
+    due = task.get("due_date")
+    if not due:
+        return (
+            '<td bgcolor="#ffffff" style="padding:9px 14px;font-size:12px;'
+            'color:#aaaaaa;font-weight:700;white-space:nowrap">—</td>'
+        )
+
+    days   = (date.fromisoformat(due) - today).days
+    status = task.get("status", "")
+
+    if days < 0 and status in _ALREADY_SUBMITTED:
+        raw = task.get("submission_date") or task.get("completion_date")
+        if raw:
+            try:
+                sub  = date.fromisoformat(raw[:10])
+                text = f"submitted {sub.strftime('%b')} {sub.day}"
+            except ValueError:
+                text = "submitted"
+        else:
+            text = "submitted"
+        color = "#7f8c8d"
+    elif days < 0:
         color, text = "#c0392b", f"{abs(days)}d overdue"
     elif days == 0:
         color, text = "#c0392b", "due today"
@@ -49,6 +72,7 @@ def _deadline_html(task: dict, today: date) -> str:
         color, text = "#d68910", f"{days}d left"
     else:
         color, text = "#444444", f"{days}d left"
+
     return (
         f'<td bgcolor="#ffffff" style="padding:9px 14px;font-size:12px;color:{color};'
         f'font-weight:700;white-space:nowrap">{text}</td>'

@@ -11,20 +11,43 @@ from fetcher import (
 )
 
 
+def _safe_date(task: dict) -> date:
+    """Parse due_date safely, returning date.max when missing or malformed."""
+    due = task.get("due_date", "")
+    if not due:
+        return date.max
+    try:
+        return date.fromisoformat(due)
+    except ValueError:
+        return date.max
+
+
 def _score(task: dict, today: date) -> tuple:
-    """Lower tuple = higher priority. Urgency tier first, then deadline adjusted for grade."""
-    deadline    = date.fromisoformat(task["due_date"])
-    days_left   = (deadline - today).days
-    grade_bonus = GRADE_WEIGHT.get(task.get("target_grade_label", "P (Pass)"), 0) * 7
-    status      = task["status"]
+    """Sort key applied to every section.
+
+    Priority order:
+      1. Red band first  (overdue or ≤ 3 days left)
+      2. Grade descending within band  (HD > D > C > P)
+      3. Days left ascending  (sooner deadline first)
+      4. Urgency tier as final tiebreaker
+    """
+    deadline     = _safe_date(task)
+    days_left    = (deadline - today).days if deadline is not date.max else 999
+    grade_weight = GRADE_WEIGHT.get(task.get("target_grade_label", "P (Pass)"), 0)
+    status       = task["status"]
+
+    red_band = 0 if days_left <= 3 else 1   # 0 = red → floats to top
 
     if status == "time_exceeded":
-        return (0, days_left - grade_bonus)
-    if status in {"redo_submission", "fix_and_resubmit"}:
-        return (1, days_left - grade_bonus)
-    if status == "need_help":
-        return (2, days_left - grade_bonus)
-    return (3, days_left - grade_bonus)
+        tier = 0
+    elif status in {"redo_submission", "fix_and_resubmit"}:
+        tier = 1
+    elif status == "need_help":
+        tier = 2
+    else:
+        tier = 3
+
+    return (red_band, -grade_weight, days_left, tier)
 
 
 def build_brief(projects: list[dict], recently_completed_days: int = 7) -> dict:
@@ -59,8 +82,8 @@ def build_brief(projects: list[dict], recently_completed_days: int = 7) -> dict:
     sort_key = lambda e: _score(e[0], today)
     urgent.sort(key=sort_key)
     todo.sort(key=sort_key)
-    waiting.sort(key=lambda e: date.fromisoformat(e[0]["due_date"]))
-    submitted.sort(key=lambda e: date.fromisoformat(e[0]["due_date"]))
+    waiting.sort(key=sort_key)
+    submitted.sort(key=sort_key)
     done.sort(key=lambda e: e[0].get("completion_date", ""), reverse=True)
 
     return {"urgent": urgent, "todo": todo, "waiting": waiting, "submitted": submitted, "done": done}
@@ -86,8 +109,6 @@ def build_brief_direct(
         unit_code  = project["unit"]["code"]
 
         for task in fetch_tasks_direct(base_url, auth_token, username, project_id):
-            if not task.get("due_date"):
-                continue
             task["_url"] = f"{base_url}/projects/{project_id}/dashboard/{task['abbreviation']}"
             status = task["status"]
 
@@ -115,8 +136,8 @@ def build_brief_direct(
     sort_key = lambda e: _score(e[0], today)
     urgent.sort(key=sort_key)
     todo.sort(key=sort_key)
-    waiting.sort(key=lambda e: date.fromisoformat(e[0]["due_date"]))
-    submitted.sort(key=lambda e: date.fromisoformat(e[0]["due_date"]))
+    waiting.sort(key=sort_key)
+    submitted.sort(key=sort_key)
     done.sort(key=lambda e: e[0].get("completion_date", ""), reverse=True)
 
     return {"urgent": urgent, "todo": todo, "waiting": waiting, "submitted": submitted, "done": done}

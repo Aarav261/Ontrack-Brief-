@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "ontracker.db"
+
+log = logging.getLogger(__name__)
 
 
 def init_db() -> None:
@@ -24,25 +27,37 @@ def init_db() -> None:
 
 
 def upsert_user(base_url: str, username: str, auth_token: str, email: str, brief_hour: int = 8) -> int:
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("""
-            INSERT INTO users (base_url, username, auth_token, email, brief_hour)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(email) DO UPDATE SET
-                base_url   = excluded.base_url,
-                username   = excluded.username,
-                auth_token = excluded.auth_token,
-                brief_hour = excluded.brief_hour
-        """, (base_url, username, auth_token, email, brief_hour))
-        return conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()[0]
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("""
+                INSERT INTO users (base_url, username, auth_token, email, brief_hour)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(email) DO UPDATE SET
+                    base_url   = excluded.base_url,
+                    username   = excluded.username,
+                    auth_token = excluded.auth_token,
+                    brief_hour = excluded.brief_hour
+            """, (base_url, username, auth_token, email, brief_hour))
+            return conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()[0]
+    except sqlite3.Error as exc:
+        log.error("Database error upserting user %s: %s", email, exc)
+        raise
 
 
 def get_all_users() -> list[dict]:
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        return [dict(r) for r in conn.execute("SELECT * FROM users").fetchall()]
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            return [dict(r) for r in conn.execute("SELECT * FROM users").fetchall()]
+    except sqlite3.Error as exc:
+        log.error("Database error loading users: %s", exc)
+        return []
 
 
 def remove_user(email: str) -> None:
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("DELETE FROM users WHERE email = ?", (email,))
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("DELETE FROM users WHERE email = ?", (email,))
+    except sqlite3.Error as exc:
+        log.error("Database error removing user %s: %s", email, exc)
+        raise
