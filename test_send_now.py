@@ -23,26 +23,28 @@ from mailer import send_brief_to
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-# ── Change this to your test email address ──────────────────────────────────
-TEST_EMAIL = "redacted@example.com"
-# ────────────────────────────────────────────────────────────────────────────
-
-
 def main() -> None:
+    cfg = configparser.ConfigParser()
+    cfg.read(CONFIG_PATH)
+    try:
+        test_email = cfg["email"]["recipient"]
+    except KeyError:
+        log.error("Missing [email] recipient in config.ini")
+        sys.exit(1)
+
     users = get_all_users()
     if not users:
         log.error("No subscribers in database. Subscribe via the web app first.")
         sys.exit(1)
 
-    # Find the subscriber matching TEST_EMAIL, fall back to first user
-    u = next((u for u in users if u["email"] == TEST_EMAIL), users[0])
+    # Find the subscriber matching the config recipient, fall back to first user
+    u = next((u for u in users if u["email"] == test_email), users[0])
 
     base_url   = u["base_url"]
     auth_token = u["auth_token"]
     username   = u["username"]
-    email      = TEST_EMAIL
 
-    log.info("Sending brief for %s to %s", username, email)
+    log.info("Sending brief for %s to %s", username, test_email)
     log.info("Token (last 8): ...%s", auth_token[-8:] if auth_token else "NONE")
 
     try:
@@ -57,12 +59,9 @@ def main() -> None:
         brief = build_brief_direct(base_url, fresh_token, username, projects)
         from renderer import render_html
         html = render_html(brief, projects, date.today())
-
-        cfg = configparser.ConfigParser()
-        cfg.read(CONFIG_PATH)
-        ok = send_brief_to(html, email, date.today(), cfg)
+        ok = send_brief_to(html, test_email, date.today(), cfg)
         if ok:
-            log.info("✓ Brief sent to %s", email)
+            log.info("✓ Brief sent to %s", test_email)
         else:
             log.error("✗ SMTP delivery failed — check logs above.")
             sys.exit(1)
