@@ -55,11 +55,9 @@ def _run_brief(base_url: str, auth_token: str, username: str, email: str,
         cfg.read(CONFIG_PATH)
         send_brief_to(html, email, date.today(), cfg)
     except TokenExpiredError:
-        log.warning("Token expired for %s — cancelling job and notifying", email)
-        if user_id is not None:
-            job_id = f"brief_{user_id}"
-            if scheduler.get_job(job_id):
-                scheduler.remove_job(job_id)
+        log.warning("Token expired for %s — cancelling brief job and notifying", email)
+        if user_id is not None and scheduler.get_job(f"brief_{user_id}"):
+            scheduler.remove_job(f"brief_{user_id}")
         cfg = configparser.ConfigParser()
         cfg.read(CONFIG_PATH)
         app_url = os.environ.get("APP_URL", "http://localhost:5001/")
@@ -72,39 +70,33 @@ def _run_brief(base_url: str, auth_token: str, username: str, email: str,
 # Scheduler helpers
 # ---------------------------------------------------------------------------
 
-def _refresh_token(user_id: int, base_url: str, auth_token: str,
-                   username: str, email: str) -> None:
-    """Hit /api/unit_roles every 20 min to keep the token alive and capture rotations."""
-    valid, fresh_token = validate_token(base_url, auth_token, username)
-    if not valid:
-        log.warning("Token expired for %s during refresh — notifying", username)
-        job_id = f"brief_{user_id}"
-        refresh_id = f"refresh_{user_id}"
-        for jid in (job_id, refresh_id):
-            if scheduler.get_job(jid):
-                scheduler.remove_job(jid)
-        cfg = configparser.ConfigParser()
-        cfg.read(CONFIG_PATH)
-        app_url = os.environ.get("APP_URL", "http://localhost:5001/")
-        send_reauth_email(email, app_url, cfg)
-        return
-    if fresh_token != auth_token:
-        log.info("Token rotated for %s during refresh — updating DB", username)
-        upsert_user(base_url, username, fresh_token, email)
-        # Update the brief job's args so it also uses the fresh token
-        job_id = f"brief_{user_id}"
-        job = scheduler.get_job(job_id)
-        if job:
-            job.modify(args=[base_url, fresh_token, username, email, user_id])
+def _refresh_all_tokens() -> None:
+    """Single consolidated job — reads fresh from DB every 20 min for all users."""
+    cfg     = configparser.ConfigParser()
+    cfg.read(CONFIG_PATH)
+    app_url = os.environ.get("APP_URL", "http://localhost:5001/")
+
+    for user in get_all_users():
+        valid, fresh_token = validate_token(
+            user["base_url"], user["auth_token"], user["username"]
+        )
+        if not valid:
+            log.warning("Token expired for %s — notifying and cancelling", user["username"])
+            if scheduler.get_job(f"brief_{user['id']}"):
+                scheduler.remove_job(f"brief_{user['id']}")
+            send_reauth_email(user["email"], app_url, cfg)
+            continue
+        if fresh_token != user["auth_token"]:
+            log.info("Token rotated for %s — updating DB", user["username"])
+            upsert_user(user["base_url"], user["username"], fresh_token,
+                        user["email"], user["brief_hour"])
 
 
 def _schedule(user_id: int, base_url: str, auth_token: str, username: str,
                email: str, brief_hour: int) -> None:
-    job_id    = f"brief_{user_id}"
-    refresh_id = f"refresh_{user_id}"
-    for jid in (job_id, refresh_id):
-        if scheduler.get_job(jid):
-            scheduler.remove_job(jid)
+    job_id = f"brief_{user_id}"
+    if scheduler.get_job(job_id):
+        scheduler.remove_job(job_id)
     scheduler.add_job(
         _run_brief,
         CronTrigger(day_of_week="mon-fri", hour=brief_hour, minute=0),
@@ -112,13 +104,14 @@ def _schedule(user_id: int, base_url: str, auth_token: str, username: str,
         id=job_id,
         misfire_grace_time=3600,
     )
-    scheduler.add_job(
-        _refresh_token,
-        CronTrigger(minute="*/20"),
-        args=[user_id, base_url, auth_token, username, email],
-        id=refresh_id,
-        misfire_grace_time=600,
-    )
+    # Ensure the single global refresh job exists
+    if not scheduler.get_job("token_refresh"):
+        scheduler.add_job(
+            _refresh_all_tokens,
+            CronTrigger(minute="*/20"),
+            id="token_refresh",
+            misfire_grace_time=600,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -279,9 +272,9 @@ def unsubscribe(email: str):
     # find user_id to cancel the scheduled job
     for user in get_all_users():
         if user["email"] == email:
-            for jid in (f"brief_{user['id']}", f"refresh_{user['id']}"):
-                if scheduler.get_job(jid):
-                    scheduler.remove_job(jid)
+            job_id = f"brief_{user['id']}"
+            if scheduler.get_job(job_id):
+                scheduler.remove_job(job_id)
             break
     remove_user(email)
     return render_template("unsubscribed.html", email=email)

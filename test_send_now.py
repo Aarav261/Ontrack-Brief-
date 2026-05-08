@@ -16,9 +16,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from builder import build_brief_direct
 from constants import CONFIG_PATH
-from db import get_all_users
+from db import get_all_users, upsert_user
 from fetcher import fetch_active_projects_direct, TokenExpiredError
 from mailer import send_brief_to
+from renderer import render_html
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -51,22 +52,23 @@ def main() -> None:
         projects, fresh_token = fetch_active_projects_direct(base_url, auth_token, username)
         if fresh_token != auth_token:
             log.info("Token rotated — was ...%s, now ...%s", auth_token[-6:], fresh_token[-6:])
+            upsert_user(base_url, username, fresh_token, u["email"], u["brief_hour"])
+
         if not projects:
             log.warning("No active projects found — nothing to send.")
             sys.exit(0)
         log.info("Found %d active project(s)", len(projects))
 
         brief = build_brief_direct(base_url, fresh_token, username, projects)
-        from renderer import render_html
-        html = render_html(brief, projects, date.today())
-        ok = send_brief_to(html, test_email, date.today(), cfg)
+        html  = render_html(brief, projects, date.today())
+        ok    = send_brief_to(html, test_email, date.today(), cfg)
         if ok:
             log.info("✓ Brief sent to %s", test_email)
         else:
             log.error("✗ SMTP delivery failed — check logs above.")
             sys.exit(1)
-    except TokenExpiredError as exc:
-        log.error("✗ Token expired: %s — re-subscribe via the bookmarklet.", exc)
+    except TokenExpiredError:
+        log.error("✗ Token expired — re-subscribe via the bookmarklet.")
         sys.exit(1)
     except Exception as exc:
         log.error("✗ Failed: %s", exc, exc_info=True)

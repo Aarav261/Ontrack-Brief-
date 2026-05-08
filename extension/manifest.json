@@ -3,11 +3,14 @@
   "name": "OnTrack Brief",
   "version": "1.0",
   "description": "Keeps your OnTrack Brief token fresh automatically.",
-  "permissions": ["storage"],
+  "permissions": ["storage", "webRequest"],
   "host_permissions": [
     "https://ontrack.deakin.edu.au/*",
     "http://localhost:5001/*"
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
       "matches": ["https://ontrack.deakin.edu.au/*"],
