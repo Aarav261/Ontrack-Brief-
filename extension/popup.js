@@ -61,17 +61,19 @@ function showTooltip(e, day) {
   stripTooltip.removeAttribute("aria-hidden");
 
   requestAnimationFrame(() => {
-    const dot    = e.currentTarget.querySelector(".strip-dot").getBoundingClientRect();
-    const tip    = stripTooltip.getBoundingClientRect();
-    const MARGIN = 6, GAP = 6;
-    let left = dot.left + dot.width / 2 - tip.width / 2;
-    left = Math.max(MARGIN, Math.min(left, window.innerWidth - tip.width - MARGIN));
-    stripTooltip.style.left = left + "px";
-    stripTooltip.style.top  = (dot.top - tip.height - GAP) + "px";
-    const arrowPct = Math.max(10, Math.min(90,
-      ((dot.left + dot.width / 2 - left) / tip.width) * 100
-    ));
-    stripTooltip.style.setProperty("--arrow-left", arrowPct + "%");
+    const col      = e.currentTarget;
+    const row      = stripRow;
+    const MARGIN   = 6, GAP = 6;
+    const colLeft  = col.offsetLeft;
+    const colWidth = col.offsetWidth;
+    const tipWidth = stripTooltip.offsetWidth;
+    const rowWidth = row.offsetWidth;
+
+    let left = colLeft + colWidth / 2 - tipWidth / 2;
+    left = Math.max(MARGIN, Math.min(left, rowWidth - tipWidth - MARGIN));
+    stripTooltip.style.left   = left + "px";
+    stripTooltip.style.bottom = (row.offsetHeight + GAP) + "px";
+    stripTooltip.style.top    = "auto";
   });
 }
 
@@ -96,8 +98,10 @@ function renderStrip(days) {
     col.className = "strip-col" +
       (day.offset === 0 ? " today" : "") +
       (count > 0 ? " has-tasks" : "");
+    const dateNum = day.date.slice(8);  // "DD" from "YYYY-MM-DD"
     col.innerHTML =
       `<span class="strip-day">${day.label}</span>` +
+      `<span class="strip-date">${dateNum}</span>` +
       `<span class="strip-dot${cls ? " " + cls : ""}"></span>` +
       `<span class="strip-count">${count > 0 ? count : "–"}</span>`;
     if (count > 0) {

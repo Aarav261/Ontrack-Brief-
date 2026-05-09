@@ -7,8 +7,14 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
+    html {
+      height: 780px;
+    }
+
     body {
-      width: 520px;
+      width: 624px;
+      height: 780px;
+      overflow-y: auto;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       font-size: 13px;
       color: #111;
@@ -29,7 +35,7 @@
       display: flex; align-items: center; justify-content: center;
       font-size: 20px;
     }
-    .header-title    { font-size: 17px; font-weight: 700; }
+    .header-title    { font-size: 22px; font-weight: 800; }
     .header-subtitle { font-size: 11px; color: #999; margin-top: 1px; }
     .icon-btn {
       width: 32px; height: 32px; border-radius: 50%;
@@ -71,11 +77,11 @@
     /* ── Stats ────────────────────────────────────────── */
     .stats-row { display: flex; padding: 0 16px 14px; gap: 10px; }
     .stat-cell {
-      flex: 1; padding: 12px 14px;
+      flex: 1; padding: 16px 18px;
       background: #f9f9f9; border-radius: 10px;
     }
     .stat-label {
-      font-size: 10px; color: #999; font-weight: 600;
+      font-size: 12px; color: #999; font-weight: 600;
       text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px;
     }
     .stat-value { font-size: 32px; font-weight: 800; line-height: 1; color: #111; }
@@ -111,6 +117,10 @@
       text-transform: uppercase; letter-spacing: .3px;
     }
     .strip-col.today .strip-day { color: #1a5fa8; font-weight: 700; }
+    .strip-date {
+      font-size: 11px; font-weight: 700; color: #555; line-height: 1;
+    }
+    .strip-col.today .strip-date { color: #1a5fa8; }
     .strip-dot {
       width: 22px; height: 22px; border-radius: 50%;
       background: #e2e2e2;
@@ -127,7 +137,7 @@
 
     /* ── Tooltip ──────────────────────────────────────── */
     .strip-tooltip {
-      position: fixed;
+      position: absolute;
       background: #1e2a3a; color: #f0f2f4;
       border-radius: 8px; padding: 9px 12px;
       font-size: 11px; line-height: 1.6;
@@ -135,15 +145,9 @@
       transition: opacity .12s ease;
       z-index: 9999; max-width: 320px;
       box-shadow: 0 4px 18px rgba(0,0,0,.28);
+      white-space: normal;
     }
     .strip-tooltip.visible { opacity: 1; }
-    .strip-tooltip::after {
-      content: ""; position: absolute;
-      top: 100%; left: var(--arrow-left, 50%);
-      transform: translateX(-50%);
-      border: 5px solid transparent;
-      border-top-color: #1e2a3a;
-    }
     .tt-task { display: flex; gap: 6px; align-items: baseline; }
     .tt-task + .tt-task {
       margin-top: 5px; padding-top: 5px;
@@ -159,12 +163,12 @@
       display: flex; align-items: center; justify-content: space-between;
       padding: 12px 16px 8px;
     }
-    .task-list-title { font-size: 13px; font-weight: 700; color: #333; }
-    .task-list-sub   { font-size: 11px; color: #bbb; }
+    .task-list-title { font-size: 18px; font-weight: 700; color: #333; }
+    .task-list-sub   { font-size: 16px; color: #888; }
     .task-list { padding: 0 16px; }
     .task-item {
       display: flex; align-items: center; gap: 12px;
-      padding: 10px 0; border-bottom: 1px solid #f5f5f5;
+      padding: 14px 0; border-bottom: 1px solid #f5f5f5;
     }
     .task-item:last-child { border-bottom: none; }
     .task-icon {
@@ -180,7 +184,7 @@
       font-size: 13px; font-weight: 600; color: #111;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .task-meta { font-size: 11px; color: #bbb; margin-top: 2px; }
+    .task-meta { font-size: 14px; color: #003887; margin-top: 2px; }
     .task-bar-wrap {
       margin-top: 6px; height: 3px;
       background: #f0f0f0; border-radius: 2px; overflow: hidden;
@@ -237,7 +241,10 @@
       justify-content: space-between;
       padding: 10px 16px;
       border-top: 1px solid #f0f0f0;
-      margin-top: 14px;
+      position: sticky;
+      bottom: 0;
+      background: #fff;
+      z-index: 100;
     }
     .footer-open {
       display: flex; align-items: center; gap: 5px;
@@ -254,7 +261,6 @@
   <!-- Header -->
   <div class="header">
     <div class="header-left">
-      <div class="app-icon">📋</div>
       <div>
         <div class="header-title">OnTrack Brief</div>
         <div class="header-subtitle">Daily task emails, automatically</div>
@@ -274,7 +280,6 @@
 
     <div class="section-header">
       <span class="section-title">Upcoming Tasks</span>
-      <span class="chip">📅 Next 7 Days</span>
     </div>
 
     <div class="stats-row">

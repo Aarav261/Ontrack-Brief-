@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 
 # Shared HTTP session with automatic retry on transient errors
 _http = requests.Session()
-_retry = Retry(total=3, backoff_factor=0.5, status_forcelist={429, 500, 502, 503, 504})
+_retry = Retry(total=3, backoff_factor=0.5, status_forcelist={429, 500, 502, 503, 504}, read=0)
 _http.mount("https://", HTTPAdapter(max_retries=_retry))
 _http.mount("http://", HTTPAdapter(max_retries=_retry))
 
