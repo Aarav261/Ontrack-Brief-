@@ -72,8 +72,10 @@ subscribeBtn.addEventListener("click", () => {
           setStatus("ok", `Subscribed — briefs at ${hourSelect.options[hourSelect.selectedIndex].text}`);
           showMsg("success", "Done! Check your inbox in a moment.");
           unsubRow.style.display = "block";
+        } else if (r.status === 400) {
+          showMsg("error", "OnTrack token is stale — reload your OnTrack tab, then try again.");
         } else {
-          return r.text().then((t) => { throw new Error(t); });
+          showMsg("error", `Server error (${r.status}). Is app.py running?`);
         }
       })
       .catch(() => {

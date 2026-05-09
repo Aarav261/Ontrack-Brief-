@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from builder import build_brief_direct
 from constants import CONFIG_PATH
 from db import get_all_users, init_db, remove_user, upsert_user
-from fetcher import fetch_active_projects_direct, validate_token, TokenExpiredError
+from fetcher import fetch_active_projects_direct, validate_token, TokenExpiredError, get_last_seen_token
 from mailer import send_brief_to, send_reauth_email
 from renderer import render_html
 
@@ -50,14 +50,26 @@ def _run_brief(base_url: str, auth_token: str, username: str, email: str,
         if not projects:
             return
         brief = build_brief_direct(base_url, fresh_token, username, projects)
+        # build_brief_direct makes many API calls, each rotating the token.
+        # Save the final token so _refresh_all_tokens doesn't see a stale one.
+        final_token = get_last_seen_token() or fresh_token
+        if final_token != fresh_token:
+            upsert_user(base_url, username, final_token, email)
+            if user_id is not None:
+                job = scheduler.get_job(f"brief_{user_id}")
+                if job:
+                    args = list(job.args)
+                    args[1] = final_token
+                    job.modify(args=args)
         html  = render_html(brief, projects, date.today())
         cfg   = configparser.ConfigParser()
         cfg.read(CONFIG_PATH)
         send_brief_to(html, email, date.today(), cfg)
     except TokenExpiredError:
-        log.warning("Token expired for %s — cancelling brief job and notifying", email)
+        log.warning("Token expired for %s — removing and notifying", email)
         if user_id is not None and scheduler.get_job(f"brief_{user_id}"):
             scheduler.remove_job(f"brief_{user_id}")
+        remove_user(email)
         cfg = configparser.ConfigParser()
         cfg.read(CONFIG_PATH)
         app_url = os.environ.get("APP_URL", "http://localhost:5001/")
@@ -77,19 +89,30 @@ def _refresh_all_tokens() -> None:
     app_url = os.environ.get("APP_URL", "http://localhost:5001/")
 
     for user in get_all_users():
-        valid, fresh_token = validate_token(
-            user["base_url"], user["auth_token"], user["username"]
-        )
+        try:
+            valid, fresh_token = validate_token(
+                user["base_url"], user["auth_token"], user["username"]
+            )
+        except Exception as exc:
+            # OnTrack service is down or unreachable — skip silently, retry next cycle
+            log.warning("OnTrack unreachable for %s (service may be down): %s", user["username"], exc)
+            continue
         if not valid:
-            log.warning("Token expired for %s — notifying and cancelling", user["username"])
+            log.warning("Token expired for %s — notifying and removing", user["username"])
             if scheduler.get_job(f"brief_{user['id']}"):
                 scheduler.remove_job(f"brief_{user['id']}")
+            remove_user(user["email"])
             send_reauth_email(user["email"], app_url, cfg)
             continue
         if fresh_token != user["auth_token"]:
-            log.info("Token rotated for %s — updating DB", user["username"])
+            log.info("Token rotated for %s — updating DB + job args", user["username"])
             upsert_user(user["base_url"], user["username"], fresh_token,
                         user["email"], user["brief_hour"])
+            job = scheduler.get_job(f"brief_{user['id']}")
+            if job:
+                args = list(job.args)
+                args[1] = fresh_token
+                job.modify(args=args)
 
 
 def _schedule(user_id: int, base_url: str, auth_token: str, username: str,

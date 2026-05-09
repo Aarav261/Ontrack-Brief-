@@ -21,6 +21,25 @@ _retry = Retry(total=3, backoff_factor=0.5, status_forcelist={429, 500, 502, 503
 _http.mount("https://", HTTPAdapter(max_retries=_retry))
 _http.mount("http://", HTTPAdapter(max_retries=_retry))
 
+# Doubtfire rotates Auth-Token on every response. We capture the latest value
+# here so callers can retrieve it after any sequence of API calls.
+_last_seen_token: list[str] = []   # list so it's mutable from the closure
+
+def _capture_token(r: requests.Response, **_kwargs) -> None:
+    token = r.headers.get("Auth-Token") or r.headers.get("auth-token") or r.headers.get("x-auth-token")
+    if token:
+        if _last_seen_token:
+            _last_seen_token[0] = token
+        else:
+            _last_seen_token.append(token)
+
+_http.hooks["response"].append(_capture_token)
+
+
+def get_last_seen_token() -> str | None:
+    """Return the most-recently seen Auth-Token across all API calls, or None."""
+    return _last_seen_token[0] if _last_seen_token else None
+
 
 # ---------------------------------------------------------------------------
 # Direct API helpers (used by the web app — no ontrack CLI dependency)
@@ -57,7 +76,7 @@ def validate_token(base_url: str, auth_token: str, username: str) -> tuple[bool,
         log.debug("validate_token: stored=%s…  refreshed=%s…", auth_token[-6:], refreshed[-6:])
         return True, refreshed
     except requests.RequestException:
-        return False, auth_token
+        raise  # let caller distinguish service-down from token-expired
 
 
 def fetch_active_projects_direct(
