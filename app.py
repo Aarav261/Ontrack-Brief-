@@ -20,9 +20,9 @@ from flask_cors import CORS
 sys.path.insert(0, str(Path(__file__).parent))
 
 from builder import build_brief_direct
-from constants import CONFIG_PATH
+from constants import CONFIG_PATH, URGENT, TODO, WAITING
 from db import get_all_users, init_db, remove_user, upsert_user
-from fetcher import fetch_active_projects_direct, validate_token, TokenExpiredError, get_last_seen_token
+from fetcher import fetch_active_projects_direct, fetch_tasks_direct, validate_token, TokenExpiredError, get_last_seen_token
 from mailer import send_brief_to, send_reauth_email
 from renderer import render_html
 
@@ -31,7 +31,10 @@ log = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
-CORS(app, resources={r"/refresh-token": {"origins": "*"}})
+CORS(app, resources={
+    r"/refresh-token": {"origins": "*"},
+    r"/api/snapshot":  {"origins": "*"},
+})
 
 scheduler = BackgroundScheduler(daemon=True)
 
@@ -288,6 +291,73 @@ def refresh_token():
                 log.info("Token refreshed via extension for %s", username)
             return {"ok": True}
     return {"ok": False, "error": "not subscribed"}, 404
+
+
+@app.route("/api/snapshot", methods=["POST"])
+def api_snapshot():
+    data       = request.get_json(silent=True) or {}
+    username   = (data.get("username") or "").strip()
+    auth_token = (data.get("auth_token") or "").strip()
+    base_url   = (data.get("base_url") or "https://ontrack.deakin.edu.au").rstrip("/")
+
+    if not username or not auth_token:
+        return {"error": "missing fields"}, 400
+
+    try:
+        valid, auth_token = validate_token(base_url, auth_token, username)
+    except Exception as exc:
+        log.warning("api_snapshot: OnTrack unreachable for %s: %s", username, exc)
+        return {"error": "OnTrack unreachable"}, 503
+
+    if not valid:
+        return {"error": "token expired"}, 401
+
+    try:
+        projects, auth_token = fetch_active_projects_direct(base_url, auth_token, username)
+    except TokenExpiredError:
+        return {"error": "token expired"}, 401
+    except Exception as exc:
+        log.warning("api_snapshot: fetch_projects failed for %s: %s", username, exc)
+        return {"error": "could not fetch projects"}, 502
+
+    today  = date.today()
+    ACTIVE = URGENT | TODO | WAITING
+
+    date_index = {}
+    days = []
+    for offset in range(7):
+        d   = today + timedelta(days=offset)
+        iso = d.isoformat()
+        date_index[iso] = offset
+        days.append({"offset": offset, "date": iso, "label": d.strftime("%a"), "tasks": []})
+
+    for project in projects:
+        project_id = project["id"]
+        unit_code  = project["unit"]["code"]
+        try:
+            tasks = fetch_tasks_direct(base_url, auth_token, username, project_id)
+            fresh = get_last_seen_token()
+            if fresh:
+                auth_token = fresh
+        except Exception as exc:
+            log.warning("api_snapshot: fetch_tasks failed project %s: %s", project_id, exc)
+            continue
+        for task in tasks:
+            if task.get("status") not in ACTIVE:
+                continue
+            due = (task.get("due_date") or "")[:10]
+            if due not in date_index:
+                continue
+            abbrev = task.get("abbreviation", "")
+            days[date_index[due]]["tasks"].append({
+                "name":         task.get("name", abbrev),
+                "abbreviation": abbrev,
+                "unit":         unit_code,
+                "grade":        task.get("target_grade_label", "P (Pass)"),
+                "url":          f"{base_url}/projects/{project_id}/dashboard/{abbrev}",
+            })
+
+    return {"generated_at": datetime.now().isoformat(timespec="seconds"), "days": days}
 
 
 @app.route("/unsubscribe/<path:email>")
