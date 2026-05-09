@@ -2,10 +2,12 @@
 
 Usage:
     python test_send_now.py
+    python test_send_now.py --token <paste-token-from-popup>
 """
 
 from __future__ import annotations
 
+import argparse
 import configparser
 import logging
 import sys
@@ -25,6 +27,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--token", help="Override the auth token from the DB (paste from popup)")
+    args = parser.parse_args()
+
     cfg = configparser.ConfigParser()
     cfg.read(CONFIG_PATH)
     try:
@@ -42,8 +48,11 @@ def main() -> None:
     u = next((u for u in users if u["email"] == test_email), users[0])
 
     base_url   = u["base_url"]
-    auth_token = u["auth_token"]
+    auth_token = args.token.strip() if args.token else u["auth_token"]
     username   = u["username"]
+
+    if args.token:
+        log.info("Using token from --token argument")
 
     log.info("Sending brief for %s to %s", username, test_email)
     log.info("Token (last 8): ...%s", auth_token[-8:] if auth_token else "NONE")
