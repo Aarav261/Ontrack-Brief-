@@ -7,18 +7,20 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
-    html {
-      height: 780px;
-    }
+    html, body { overflow: visible; }
 
     body {
       width: 624px;
-      height: 780px;
-      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       font-size: 13px;
       color: #111;
       background: #fff;
+    }
+
+    .scroll-area {
+      overflow: visible;
     }
 
     /* ── Header ───────────────────────────────────────── */
@@ -28,22 +30,18 @@
       padding: 14px 16px;
       border-bottom: 1px solid #f0f0f0;
     }
-    .header-left { display: flex; align-items: center; gap: 10px; }
-    .app-icon {
-      width: 38px; height: 38px; border-radius: 10px;
-      background: #16213e;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 20px;
-    }
     .header-title    { font-size: 22px; font-weight: 800; }
     .header-subtitle { font-size: 11px; color: #999; margin-top: 1px; }
+    .header-right    { display: flex; align-items: center; gap: 8px; }
     .icon-btn {
       width: 32px; height: 32px; border-radius: 50%;
       background: #f5f5f5; border: none; cursor: pointer;
       display: flex; align-items: center; justify-content: center;
       font-size: 15px; color: #555;
+      transition: background .12s ease, color .12s ease;
     }
-    .icon-btn:hover { background: #ebebeb; }
+    .icon-btn:hover           { background: #ebebeb; }
+    .icon-btn.active          { background: #16213e; color: #fff; }
 
     /* ── Status pill ──────────────────────────────────── */
     .status-pill {
@@ -60,6 +58,10 @@
     .dot.warning { background: #d35400; }
     .dot.error   { background: #c0392b; }
 
+    /* ── Tab panels ───────────────────────────────────── */
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
     /* ── Summary section ──────────────────────────────── */
     .section-header {
       display: flex; align-items: center;
@@ -67,12 +69,6 @@
       padding: 16px 16px 10px;
     }
     .section-title { font-size: 19px; font-weight: 700; }
-    .chip {
-      display: flex; align-items: center; gap: 5px;
-      background: #f5f5f5; border: 1px solid #e8e8e8;
-      border-radius: 20px; padding: 5px 12px;
-      font-size: 12px; font-weight: 600; color: #444;
-    }
 
     /* ── Stats ────────────────────────────────────────── */
     .stats-row { display: flex; padding: 0 16px 14px; gap: 10px; }
@@ -89,7 +85,7 @@
     .stat-value.orange { color: #d68910; }
 
     /* ── 7-day strip ──────────────────────────────────── */
-    .strip-section { padding: 0 16px 14px; }
+    .strip-section { padding: 0 16px 14px; position: relative; }
     #strip-loading {
       display: flex; justify-content: center; gap: 5px; padding: 12px 0;
     }
@@ -113,32 +109,33 @@
       align-items: center; gap: 5px; flex: 1; cursor: default;
       padding: 6px 4px; border-radius: 8px;
     }
-    .strip-col.today {
-      outline: 2px solid #1a5fa8;
-      background: #f0f6ff;
-    }
+    .strip-col.today { outline: 2px solid #1a5fa8; background: #f0f6ff; }
     .strip-day {
       font-size: 10px; font-weight: 600; color: #aaa;
       text-transform: uppercase; letter-spacing: .3px;
     }
     .strip-col.today .strip-day { color: #1a5fa8; font-weight: 700; }
-    .strip-date {
-      font-size: 11px; font-weight: 700; color: #555; line-height: 1;
-    }
+    .strip-date { font-size: 11px; font-weight: 700; color: #555; line-height: 1; }
     .strip-col.today .strip-date { color: #1a5fa8; }
     .strip-dot {
-      width: 22px; height: 22px; border-radius: 50%;
+      width: 28px; height: 28px; border-radius: 50%;
       background: #e2e2e2;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700; color: transparent;
       transition: transform .1s ease, box-shadow .1s ease;
     }
-    .strip-dot.red    { background: #cb4335; }
-    .strip-dot.orange { background: #d68910; }
+    .strip-dot.red    { background: #cb4335; color: #fff; }
+    .strip-dot.orange { background: #d68910; color: #fff; }
     .strip-col.has-tasks:hover .strip-dot {
-      transform: scale(1.2);
-      box-shadow: 0 0 0 3px rgba(0,0,0,.08);
+      transform: scale(1.2); box-shadow: 0 0 0 3px rgba(0,0,0,.08);
     }
-    .strip-count { font-size: 10px; color: #ccc; font-weight: 600; }
-    .strip-col.has-tasks .strip-count { color: #666; }
+
+    /* 2-week grid mode */
+    #strip-row.two-week {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 6px 4px;
+    }
 
     /* ── Tooltip ──────────────────────────────────────── */
     .strip-tooltip {
@@ -181,60 +178,67 @@
       display: flex; align-items: center; justify-content: center;
       font-size: 18px; font-weight: 800;
       font-family: monospace; letter-spacing: -0.5px; flex-shrink: 0;
-      background: transparent;
-      border-width: 2px; border-style: solid;
+      background: transparent; border-width: 2px; border-style: solid;
     }
     .task-body { flex: 1; min-width: 0; }
     .task-name {
-      font-size: 13px; font-weight: 600; color: #111;
+      font-size: 15px; font-weight: 600; color: #111;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .task-meta { font-size: 14px; color: #003887; margin-top: 2px; }
+    .task-meta { font-size: 13px; color: #003887; margin-top: 2px; }
+    .task-right { text-align: right; flex-shrink: 0; }
+    .task-due { font-size: 13px; font-weight: 700; }
+    .task-due.red    { color: #cb4335; }
+    .task-due.orange { color: #d68910; }
+    .task-date { font-size: 11px; color: #aaa; margin-top: 2px; }
     .task-bar-wrap {
       margin-top: 6px; height: 3px;
       background: #f0f0f0; border-radius: 2px; overflow: hidden;
     }
     .task-bar { height: 3px; border-radius: 2px; }
-    .task-right { text-align: right; flex-shrink: 0; }
-    .task-due { font-size: 13px; font-weight: 700; }
-    .task-due.red    { color: #cb4335; }
-    .task-due.orange { color: #d68910; }
-    .task-pct { font-size: 11px; color: #ccc; margin-top: 2px; }
     .task-empty {
       text-align: center; padding: 22px 0;
       color: #ccc; font-size: 12px; font-style: italic;
     }
 
-    /* ── Subscribe form ───────────────────────────────── */
-    .form-section { padding: 14px 16px 0; }
-    label {
+    /* ── Settings panel ───────────────────────────────── */
+    .settings-panel { padding: 20px 16px 0; }
+    .settings-heading {
+      font-size: 19px; font-weight: 700; color: #111;
+      margin-bottom: 20px;
+    }
+    .field-group { margin-bottom: 16px; }
+    .field-group label {
       display: block; font-size: 11px; font-weight: 600;
       color: #666; text-transform: uppercase;
-      letter-spacing: 0.5px; margin-bottom: 4px;
+      letter-spacing: 0.5px; margin-bottom: 5px;
     }
-    input, select {
-      width: 100%; padding: 9px 11px;
+    .field-group input,
+    .field-group select {
+      width: 100%; padding: 10px 12px;
       border: 1px solid #e0e0e0; border-radius: 8px;
-      font-size: 13px; margin-bottom: 12px; outline: none;
+      font-size: 13px; outline: none;
       background: #fafafa; color: #111;
     }
-    input:focus, select:focus { border-color: #1a5fa8; background: #fff; }
-    button {
-      width: 100%; padding: 10px;
+    .field-group input:focus,
+    .field-group select:focus { border-color: #1a5fa8; background: #fff; }
+    .subscribe-btn {
+      width: 100%; padding: 11px;
       background: #16213e; color: #fff;
       border: none; border-radius: 8px;
       font-size: 13px; font-weight: 600; cursor: pointer;
+      margin-top: 4px;
     }
-    button:hover    { background: #0f3460; }
-    button:disabled { background: #ccc; cursor: default; }
+    .subscribe-btn:hover    { background: #0f3460; }
+    .subscribe-btn:disabled { background: #ccc; cursor: default; }
     .msg {
-      margin-top: 8px; padding: 8px 10px;
+      margin-top: 10px; padding: 9px 11px;
       border-radius: 7px; font-size: 12px; display: none;
     }
     .msg.success { background: #e6f9ee; color: #1e8449; display: block; }
     .msg.error   { background: #fde8e7; color: #c0392b; display: block; }
     .unsubscribe {
-      text-align: center; margin-top: 10px;
+      text-align: center; margin-top: 14px;
       font-size: 11px; color: #bbb;
     }
     .unsubscribe a { color: #c0392b; text-decoration: none; cursor: pointer; }
@@ -246,17 +250,18 @@
       justify-content: space-between;
       padding: 10px 16px;
       border-top: 1px solid #f0f0f0;
-      position: sticky;
-      bottom: 0;
       background: #fff;
-      z-index: 100;
+      flex-shrink: 0;
     }
     .footer-open {
-      display: flex; align-items: center; gap: 5px;
-      font-size: 12px; font-weight: 600; color: #1a5fa8;
-      text-decoration: none; cursor: pointer; border: none; background: none;
+      display: flex; align-items: center;
+      padding: 8px 18px; border-radius: 8px;
+      background: #16213e; color: #fff;
+      font-size: 13px; font-weight: 600;
+      text-decoration: none; cursor: pointer;
+      transition: background .15s ease;
     }
-    .footer-open:hover { text-decoration: underline; }
+    .footer-open:hover { background: #0f3460; text-decoration: none; }
     .footer-sync { font-size: 11px; color: #bbb; }
     .footer-ver  { font-size: 11px; color: #ddd; }
   </style>
@@ -265,88 +270,116 @@
 
   <!-- Header -->
   <div class="header">
-    <div class="header-left">
-      <div>
-        <div class="header-title">OnTrack Brief</div>
-        <div class="header-subtitle">Daily task emails, automatically</div>
-      </div>
+    <div>
+      <div class="header-title">OnTrack Brief</div>
+      <div class="header-subtitle">Daily task emails, automatically</div>
     </div>
-    <button class="icon-btn" title="Reload snapshot" id="refresh-btn">↻</button>
+    <div class="header-right">
+      <button class="icon-btn" id="settings-btn" title="Settings">⚙</button>
+      <button class="icon-btn" id="refresh-btn"  title="Reload snapshot">↻</button>
+    </div>
   </div>
 
-  <!-- Status pill -->
+  <div class="scroll-area">
+
+  <!-- Status pill (always visible) -->
   <div id="status" class="status-pill warning">
     <span class="dot warning"></span>
     <span id="status-text">Waiting for OnTrack…</span>
   </div>
 
-  <!-- Snapshot section (hidden until data loads) -->
-  <div id="snapshot-section" style="display:none">
+  <!-- ── Main tab ─────────────────────────────────────── -->
+  <div id="tab-main" class="tab-panel">
 
-    <div class="section-header">
-      <span class="section-title">Upcoming Tasks</span>
-    </div>
+    <div id="snapshot-section" style="display:none">
 
-    <div class="stats-row">
-      <div class="stat-cell">
-        <div class="stat-label">Urgent</div>
-        <div class="stat-value red" id="stat-urgent">—</div>
+      <div class="section-header">
+        <span class="section-title">Upcoming Tasks</span>
       </div>
-      <div class="stat-cell">
-        <div class="stat-label">Due Soon</div>
-        <div class="stat-value orange" id="stat-soon">—</div>
-      </div>
-      <div class="stat-cell">
-        <div class="stat-label">This Week</div>
-        <div class="stat-value" id="stat-total">—</div>
-      </div>
-    </div>
 
-    <div class="strip-section">
-      <div id="strip-loading" style="display:none">
-        <span class="strip-ld"></span>
-        <span class="strip-ld"></span>
-        <span class="strip-ld"></span>
+      <div class="stats-row">
+        <div class="stat-cell">
+          <div class="stat-label">Urgent</div>
+          <div class="stat-value red" id="stat-urgent">—</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-label">Due Soon</div>
+          <div class="stat-value orange" id="stat-soon">—</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-label">This Week</div>
+          <div class="stat-value" id="stat-total">—</div>
+        </div>
       </div>
-      <div id="strip-row" style="display:none"></div>
-      <div id="strip-tooltip" class="strip-tooltip" aria-hidden="true"></div>
-    </div>
 
-    <div class="divider"></div>
+      <div class="strip-section">
+        <div id="strip-loading" style="display:none">
+          <span class="strip-ld"></span>
+          <span class="strip-ld"></span>
+          <span class="strip-ld"></span>
+        </div>
+        <div id="strip-row" style="display:none"></div>
+        <div id="strip-tooltip" class="strip-tooltip" aria-hidden="true"></div>
+      </div>
 
-    <div class="task-list-header">
-      <span class="task-list-title">Tasks</span>
-      <span class="task-list-sub" id="task-list-sub"></span>
+      <div class="divider"></div>
+
+      <div class="task-list-header">
+        <span class="task-list-title">Tasks</span>
+        <span class="task-list-sub" id="task-list-sub"></span>
+      </div>
+      <div class="task-list" id="task-list"></div>
+
     </div>
-    <div class="task-list" id="task-list"></div>
 
   </div>
 
-  <!-- Subscribe form -->
-  <div class="form-section" id="form">
-    <label for="email">Your email</label>
-    <input type="email" id="email" placeholder="you@example.com">
+  <!-- ── Settings tab ─────────────────────────────────── -->
+  <div id="tab-settings" class="tab-panel">
+    <div class="settings-panel">
+      <div class="settings-heading">Settings</div>
 
-    <label for="hour">Send brief at</label>
-    <select id="hour">
-      <option value="6">6:00 AM</option>
-      <option value="7">7:00 AM</option>
-      <option value="8" selected>8:00 AM</option>
-      <option value="9">9:00 AM</option>
-      <option value="10">10:00 AM</option>
-    </select>
+      <div class="field-group">
+        <label for="email">Your email</label>
+        <input type="email" id="email" placeholder="you@example.com">
+      </div>
 
-    <button id="subscribe-btn" disabled>Subscribe</button>
-    <div id="msg" class="msg"></div>
+      <div class="field-group">
+        <label for="strip-weeks">Strip view</label>
+        <select id="strip-weeks">
+          <option value="1">1 week (7 days)</option>
+          <option value="2">2 weeks (14 days)</option>
+        </select>
+      </div>
 
-    <div class="unsubscribe" id="unsubscribe-row" style="display:none">
-      <a id="unsubscribe-link">Unsubscribe</a>
+      <div class="field-group">
+        <label for="hour">Send brief at</label>
+        <select id="hour">
+          <option value="6">6:00 AM</option>
+          <option value="7">7:00 AM</option>
+          <option value="8" selected>8:00 AM</option>
+          <option value="9">9:00 AM</option>
+          <option value="10">10:00 AM</option>
+        </select>
+      </div>
+
+      <button class="subscribe-btn" id="subscribe-btn" disabled>Subscribe</button>
+      <div id="msg" class="msg"></div>
+
+      <div class="unsubscribe" id="unsubscribe-row" style="display:none">
+        <a id="unsubscribe-link">Unsubscribe</a>
+      </div>
     </div>
   </div>
+
+  </div><!-- end .scroll-area -->
 
   <!-- Footer -->
   <div class="footer">
-    <a class="footer-open" href="https://ontrack.deakin.edu.au" target="_blank">⊞ Open OnTrack</a>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <a class="footer-open" href="https://ontrack.deakin.edu.au" target="_blank">Open OnTrack</a>
+      <span id="footer-user" style="font-size:11px;color:#aaa;"></span>
+    </div>
     <span class="footer-sync" id="footer-sync"></span>
     <span class="footer-ver">v1.0</span>
   </div>

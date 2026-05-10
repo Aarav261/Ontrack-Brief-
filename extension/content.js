@@ -21,17 +21,8 @@ window.addEventListener("ontrack-auth-captured", (event) => {
   // Store in chrome.storage so popup can read it
   chrome.storage.local.set({ auth_token, username, base_url });
 
-  // Push to app server
-  fetch(`${APP_URL}/refresh-token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ auth_token, username }),
-  })
-    .then((r) => r.json())
-    .then((d) => {
-      if (d.ok) console.debug("[OnTrack Brief] Token refreshed for", username);
-    })
-    .catch(() => {
-      // App server not running — fail silently
-    });
+  // Route through background worker to avoid mixed-content blocking
+  // (content script runs on HTTPS OnTrack; app server is HTTP localhost)
+  chrome.runtime.sendMessage({ type: "refresh-token", auth_token, username })
+    .catch(() => {});
 });

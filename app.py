@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from builder import build_brief_direct
 from constants import CONFIG_PATH, URGENT, TODO, WAITING
-from db import get_all_users, init_db, remove_user, upsert_user
+from db import get_all_users, init_db, mark_token_invalid, remove_user, upsert_user
 from fetcher import fetch_active_projects_direct, fetch_tasks_direct, validate_token, TokenExpiredError, get_last_seen_token
 from mailer import send_brief_to, send_reauth_email
 from renderer import render_html
@@ -69,10 +69,10 @@ def _run_brief(base_url: str, auth_token: str, username: str, email: str,
         cfg.read(CONFIG_PATH)
         send_brief_to(html, email, date.today(), cfg)
     except TokenExpiredError:
-        log.warning("Token expired for %s — removing and notifying", email)
+        log.warning("Token expired for %s — pausing briefs, waiting for extension to push fresh token", email)
         if user_id is not None and scheduler.get_job(f"brief_{user_id}"):
             scheduler.remove_job(f"brief_{user_id}")
-        remove_user(email)
+        mark_token_invalid(email)
         cfg = configparser.ConfigParser()
         cfg.read(CONFIG_PATH)
         app_url = os.environ.get("APP_URL", "http://localhost:5001/")
@@ -101,10 +101,10 @@ def _refresh_all_tokens() -> None:
             log.warning("OnTrack unreachable for %s (service may be down): %s", user["username"], exc)
             continue
         if not valid:
-            log.warning("Token expired for %s — notifying and removing", user["username"])
+            log.warning("Token expired for %s — pausing briefs, waiting for extension to push fresh token", user["username"])
             if scheduler.get_job(f"brief_{user['id']}"):
                 scheduler.remove_job(f"brief_{user['id']}")
-            remove_user(user["email"])
+            mark_token_invalid(user["email"])
             send_reauth_email(user["email"], app_url, cfg)
             continue
         if fresh_token != user["auth_token"]:
@@ -278,17 +278,26 @@ def refresh_token():
         return {"ok": False, "error": "missing fields"}, 400
     for user in get_all_users():
         if user["username"] == username:
-            if user["auth_token"] != auth_token:
+            token_changed   = user["auth_token"] != auth_token
+            was_invalid     = not user["token_valid"]
+
+            if token_changed or was_invalid:
                 upsert_user(user["base_url"], username, auth_token,
-                            user["email"], user["brief_hour"])
-                # Propagate fresh token to both scheduled jobs
-                for jid in (f"brief_{user['id']}", f"refresh_{user['id']}"):
-                    job = scheduler.get_job(jid)
-                    if job:
-                        args = list(job.args)
-                        args[1] = auth_token  # auth_token is always index 1
-                        job.modify(args=args)
-                log.info("Token refreshed via extension for %s", username)
+                            user["email"], user["brief_hour"], token_valid=1)
+                # Propagate fresh token to running brief job if present
+                job = scheduler.get_job(f"brief_{user['id']}")
+                if job:
+                    args = list(job.args)
+                    args[1] = auth_token
+                    job.modify(args=args)
+                # Re-schedule brief if it was paused due to expired token
+                if was_invalid:
+                    log.info("Token restored for %s — re-scheduling brief", username)
+                    _schedule(user["id"], user["base_url"], auth_token,
+                              username, user["email"], user["brief_hour"])
+                else:
+                    log.info("Token refreshed via extension for %s", username)
+
             return {"ok": True}
     return {"ok": False, "error": "not subscribed"}, 404
 
@@ -299,6 +308,7 @@ def api_snapshot():
     username   = (data.get("username") or "").strip()
     auth_token = (data.get("auth_token") or "").strip()
     base_url   = (data.get("base_url") or "https://ontrack.deakin.edu.au").rstrip("/")
+    days_count = min(14, max(1, int(data.get("days", 7))))
 
     if not username or not auth_token:
         return {"error": "missing fields"}, 400
@@ -325,7 +335,7 @@ def api_snapshot():
 
     date_index = {}
     days = []
-    for offset in range(7):
+    for offset in range(days_count):
         d   = today + timedelta(days=offset)
         iso = d.isoformat()
         date_index[iso] = offset
@@ -354,6 +364,7 @@ def api_snapshot():
                 "abbreviation": abbrev,
                 "unit":         unit_code,
                 "grade":        task.get("target_grade_label", "P (Pass)"),
+                "due_date":     due,
                 "url":          f"{base_url}/projects/{project_id}/dashboard/{abbrev}",
             })
 
@@ -386,6 +397,9 @@ if __name__ == "__main__":
 
     try:
         for user in get_all_users():
+            if not user.get("token_valid", 1):
+                log.info("Skipping schedule for %s — token invalid, waiting for extension refresh", user["username"])
+                continue
             _schedule(user["id"], user["base_url"], user["auth_token"],
                       user["username"], user["email"], user["brief_hour"])
     except Exception as exc:

@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from builder import build_brief_direct
 from constants import CONFIG_PATH
 from db import get_all_users, upsert_user
-from fetcher import fetch_active_projects_direct, TokenExpiredError
+from fetcher import fetch_active_projects_direct, get_last_seen_token, TokenExpiredError
 from mailer import send_brief_to
 from renderer import render_html
 
@@ -69,6 +69,10 @@ def main() -> None:
         log.info("Found %d active project(s)", len(projects))
 
         brief = build_brief_direct(base_url, fresh_token, username, projects)
+        final_token = get_last_seen_token() or fresh_token
+        if final_token != fresh_token:
+            log.info("Token rotated after build — saving ...%s", final_token[-6:])
+            upsert_user(base_url, username, final_token, u["email"], u["brief_hour"])
         html  = render_html(brief, projects, date.today())
         ok    = send_brief_to(html, test_email, date.today(), cfg)
         if ok:

@@ -1,25 +1,53 @@
 const APP_URL = "http://localhost:5001";
 
-const statusEl       = document.getElementById("status");
-const statusText     = document.getElementById("status-text");
-const statusDot      = statusEl.querySelector(".dot");
-const subscribeBtn   = document.getElementById("subscribe-btn");
-const emailInput     = document.getElementById("email");
-const hourSelect     = document.getElementById("hour");
-const msgEl          = document.getElementById("msg");
-const unsubRow       = document.getElementById("unsubscribe-row");
-const unsubLink      = document.getElementById("unsubscribe-link");
+const statusEl        = document.getElementById("status");
+const statusText      = document.getElementById("status-text");
+const statusDot       = statusEl.querySelector(".dot");
+const subscribeBtn    = document.getElementById("subscribe-btn");
+const emailInput      = document.getElementById("email");
+const hourSelect      = document.getElementById("hour");
+const msgEl           = document.getElementById("msg");
+const unsubRow        = document.getElementById("unsubscribe-row");
+const unsubLink       = document.getElementById("unsubscribe-link");
 const snapshotSection = document.getElementById("snapshot-section");
-const stripLoading   = document.getElementById("strip-loading");
-const stripRow       = document.getElementById("strip-row");
-const stripTooltip   = document.getElementById("strip-tooltip");
-const statUrgent     = document.getElementById("stat-urgent");
-const statSoon       = document.getElementById("stat-soon");
-const statTotal      = document.getElementById("stat-total");
-const taskList       = document.getElementById("task-list");
-const taskListSub    = document.getElementById("task-list-sub");
-const footerSync     = document.getElementById("footer-sync");
-const refreshBtn     = document.getElementById("refresh-btn");
+const stripLoading    = document.getElementById("strip-loading");
+const stripRow        = document.getElementById("strip-row");
+const stripTooltip    = document.getElementById("strip-tooltip");
+const statUrgent      = document.getElementById("stat-urgent");
+const statSoon        = document.getElementById("stat-soon");
+const statTotal       = document.getElementById("stat-total");
+const taskList        = document.getElementById("task-list");
+const taskListSub     = document.getElementById("task-list-sub");
+const footerSync      = document.getElementById("footer-sync");
+const footerUser      = document.getElementById("footer-user");
+const refreshBtn      = document.getElementById("refresh-btn");
+const settingsBtn     = document.getElementById("settings-btn");
+const tabMain         = document.getElementById("tab-main");
+const tabSettings     = document.getElementById("tab-settings");
+const stripWeeksEl    = document.getElementById("strip-weeks");
+
+// ── Tab switching ─────────────────────────────────────────────────
+function switchTab(tab) {
+  const onSettings = tab === "settings";
+  tabMain.classList.toggle("active", !onSettings);
+  tabSettings.classList.toggle("active", onSettings);
+  settingsBtn.classList.toggle("active", onSettings);
+}
+
+settingsBtn.addEventListener("click", () => {
+  const isSettings = tabSettings.classList.contains("active");
+  switchTab(isSettings ? "main" : "settings");
+});
+
+stripWeeksEl.addEventListener("change", () => {
+  const weeks = parseInt(stripWeeksEl.value, 10);
+  chrome.storage.local.set({ strip_weeks: String(weeks) });
+  if (_snapshotAuth) {
+    chrome.storage.local.remove(SNAPSHOT_KEY, () => {
+      loadSnapshot(_snapshotAuth.authToken, _snapshotAuth.username, _snapshotAuth.baseUrl, true, weeks * 7);
+    });
+  }
+});
 
 const SNAPSHOT_KEY    = "snapshot_cache";
 const SNAPSHOT_TTL_MS = 30 * 60 * 1000;
@@ -36,10 +64,19 @@ const GRADE_COLOR = {
   "HD (High Distinction)":"#6c3483",
 };
 
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+function formatDueDate(iso) {
+  if (!iso) return "";
+  const parts = iso.split("-");
+  return `${parseInt(parts[2])} ${MONTHS[parseInt(parts[1]) - 1]}`;
+}
+
 function setStatus(type, text) {
   statusEl.className      = `status-pill ${type}`;
   statusDot.className     = `dot ${type}`;
   statusText.textContent  = text;
+  statusEl.style.display  = type === "ok" ? "none" : "";
 }
 
 function showMsg(type, text) {
@@ -61,19 +98,21 @@ function showTooltip(e, day) {
   stripTooltip.removeAttribute("aria-hidden");
 
   requestAnimationFrame(() => {
-    const col      = e.currentTarget;
-    const row      = stripRow;
-    const MARGIN   = 6, GAP = 6;
-    const colLeft  = col.offsetLeft;
-    const colWidth = col.offsetWidth;
-    const tipWidth = stripTooltip.offsetWidth;
-    const rowWidth = row.offsetWidth;
+    const col     = e.currentTarget;
+    const section = stripRow.parentElement;
+    const colRect = col.getBoundingClientRect();
+    const secRect = section.getBoundingClientRect();
+    const tipW    = stripTooltip.offsetWidth;
+    const tipH    = stripTooltip.offsetHeight;
+    const MARGIN  = 6, GAP = 6;
 
-    let left = colLeft + colWidth / 2 - tipWidth / 2;
-    left = Math.max(MARGIN, Math.min(left, rowWidth - tipWidth - MARGIN));
+    let left = colRect.left - secRect.left + colRect.width / 2 - tipW / 2;
+    left = Math.max(MARGIN, Math.min(left, secRect.width - tipW - MARGIN));
+    const top = colRect.top - secRect.top - tipH - GAP;
+
     stripTooltip.style.left   = left + "px";
-    stripTooltip.style.bottom = (row.offsetHeight + GAP) + "px";
-    stripTooltip.style.top    = "auto";
+    stripTooltip.style.top    = top + "px";
+    stripTooltip.style.bottom = "auto";
   });
 }
 
@@ -91,6 +130,7 @@ function dotClass(offset, count) {
 
 function renderStrip(days) {
   stripRow.innerHTML = "";
+  stripRow.classList.toggle("two-week", days.length > 7);
   days.forEach((day) => {
     const count = day.tasks.length;
     const cls   = dotClass(day.offset, count);
@@ -102,8 +142,7 @@ function renderStrip(days) {
     col.innerHTML =
       `<span class="strip-day">${day.label}</span>` +
       `<span class="strip-date">${dateNum}</span>` +
-      `<span class="strip-dot${cls ? " " + cls : ""}"></span>` +
-      `<span class="strip-count">${count > 0 ? count : "–"}</span>`;
+      `<span class="strip-dot${cls ? " " + cls : ""}">${count > 0 ? count : ""}</span>`;
     if (count > 0) {
       col.addEventListener("mouseenter", (e) => showTooltip(e, day));
       col.addEventListener("mouseleave", hideTooltip);
@@ -111,7 +150,7 @@ function renderStrip(days) {
     stripRow.appendChild(col);
   });
   stripLoading.style.display = "none";
-  stripRow.style.display     = "flex";
+  stripRow.style.display     = days.length > 7 ? "grid" : "flex";
 }
 
 // ── Task list ─────────────────────────────────────────────────────
@@ -162,7 +201,7 @@ function renderTasks(days) {
       `</div>` +
       `<div class="task-right">` +
         `<div class="task-due ${cls}">${dueLabel(t.offset)}</div>` +
-        `<div class="task-pct">${barWidth}%</div>` +
+        `<div class="task-date">${formatDueDate(t.due_date)}</div>` +
       `</div>`;
     taskList.appendChild(item);
   });
@@ -182,8 +221,8 @@ function syncLabel(ts) {
 
 let _snapshotAuth = null;
 
-function loadSnapshot(authToken, username, baseUrl, force = false) {
-  _snapshotAuth = { authToken, username, baseUrl };
+function loadSnapshot(authToken, username, baseUrl, force = false, days = 7) {
+  _snapshotAuth = { authToken, username, baseUrl, days };
 
   snapshotSection.style.display = "block";
   stripLoading.style.display    = "flex";
@@ -204,6 +243,7 @@ function loadSnapshot(authToken, username, baseUrl, force = false) {
       body: JSON.stringify({
         username, auth_token: authToken,
         base_url: baseUrl || "https://ontrack.deakin.edu.au",
+        days,
       }),
     });
     const timeoutP = new Promise((_, rej) =>
@@ -231,25 +271,31 @@ function loadSnapshot(authToken, username, baseUrl, force = false) {
 refreshBtn.addEventListener("click", () => {
   if (!_snapshotAuth) return;
   chrome.storage.local.remove(SNAPSHOT_KEY, () => {
-    loadSnapshot(_snapshotAuth.authToken, _snapshotAuth.username, _snapshotAuth.baseUrl, true);
+    loadSnapshot(_snapshotAuth.authToken, _snapshotAuth.username, _snapshotAuth.baseUrl, true, _snapshotAuth.days);
   });
 });
 
 // ── Init ──────────────────────────────────────────────────────────
 
-chrome.storage.local.get(["auth_token", "username", "base_url", "subscribed_email"], (data) => {
+chrome.storage.local.get(["auth_token", "username", "base_url", "subscribed_email", "strip_weeks"], (data) => {
+  const weeks = parseInt(data.strip_weeks || "1", 10);
+  stripWeeksEl.value = String(weeks);
+
   if (data.auth_token && data.username) {
     setStatus("ok", `Logged in as ${data.username}`);
+    footerUser.textContent = data.username;
     subscribeBtn.disabled = false;
-    loadSnapshot(data.auth_token, data.username, data.base_url);
+    switchTab("main");
+    loadSnapshot(data.auth_token, data.username, data.base_url, false, weeks * 7);
 
     if (data.subscribed_email) {
       emailInput.value       = data.subscribed_email;
       unsubRow.style.display = "block";
     }
   } else {
-    setStatus("warning", "Open OnTrack first — then click Subscribe");
+    setStatus("warning", "Open OnTrack first — then subscribe in Settings");
     subscribeBtn.disabled = true;
+    switchTab("settings");
   }
 });
 
@@ -290,7 +336,7 @@ subscribeBtn.addEventListener("click", () => {
           showMsg("success", "Done! Check your inbox in a moment.");
           unsubRow.style.display = "block";
         } else if (r.status === 400) {
-          showMsg("error", "OnTrack token is stale — reload your OnTrack tab, then try again.");
+          showMsg("error", "OnTrack session expired — log out of OnTrack, log back in, then try again.");
         } else {
           showMsg("error", `Server error (${r.status}). Is app.py running?`);
         }
