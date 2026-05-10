@@ -1,8 +1,8 @@
 """Send a brief immediately — no scheduler, no delay.
 
 Usage:
-    python test_send_now.py
-    python test_send_now.py --token <paste-token-from-popup>
+    python scripts/test_send_now.py
+    python scripts/test_send_now.py --token <paste-token-from-popup>
 """
 
 from __future__ import annotations
@@ -14,14 +14,14 @@ import sys
 from datetime import date
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))  # project root
 
-from builder import build_brief_direct
-from constants import CONFIG_PATH
-from db import get_all_users, upsert_user
-from fetcher import fetch_active_projects_direct, get_last_seen_token, TokenExpiredError
-from mailer import send_brief_to
-from renderer import render_html
+from core.builder import build_brief_direct
+from core.constants import CONFIG_PATH
+from core.db import get_all_users, upsert_user
+from core.fetcher import fetch_active_projects_direct, get_last_seen_token, TokenExpiredError
+from core.mailer import send_brief_to
+from core.renderer import render_html
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -44,7 +44,6 @@ def main() -> None:
         log.error("No subscribers in database. Subscribe via the web app first.")
         sys.exit(1)
 
-    # Find the subscriber matching the config recipient, fall back to first user
     u = next((u for u in users if u["email"] == test_email), users[0])
 
     base_url   = u["base_url"]
@@ -81,7 +80,7 @@ def main() -> None:
             log.error("✗ SMTP delivery failed — check logs above.")
             sys.exit(1)
     except TokenExpiredError:
-        log.error("✗ Token expired — re-subscribe via the bookmarklet.")
+        log.error("✗ Token expired — open OnTrack so the extension can capture a fresh token.")
         sys.exit(1)
     except Exception as exc:
         log.error("✗ Failed: %s", exc, exc_info=True)

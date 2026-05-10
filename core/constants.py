@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-CONFIG_PATH = Path(__file__).parent / "config.ini"
+CONFIG_PATH = Path(__file__).parent.parent / "config.ini"
 
 GRADE_WEIGHT = {
     "HD (High Distinction)": 3,

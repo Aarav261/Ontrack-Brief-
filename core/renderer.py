@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from constants import GRADE_SHORT, GRADE_COLOR, STATUS_LABEL, STATUS_COLOR
+from .constants import GRADE_SHORT, GRADE_COLOR, STATUS_LABEL, STATUS_COLOR
 
 _STATUS_BG = {
     "not_started":        "#f0f2f2",
@@ -191,6 +191,9 @@ def _stat_cell(value: int, label: str) -> str:
 def render_html(brief: dict, projects: list[dict], today: date, max_todo: int = 10) -> str:
     units = " &middot; ".join(p["unit"]["code"] for p in projects)
 
+    def _cap(items: list) -> list:
+        return items[:max_todo]
+
     stats = "".join([
         _stat_cell(len(brief["urgent"]),    "Urgent"),
         _stat_cell(len(brief["todo"]),      "To Do"),
@@ -199,11 +202,11 @@ def render_html(brief: dict, projects: list[dict], today: date, max_todo: int = 
     ])
 
     body = "".join([
-        _section_html("Needs Attention",              "🚨", "#c0392b", brief["urgent"],    today),
-        _section_html("Upcoming Tasks",               "🎯", "#2471a3", brief["todo"],      today),
-        _section_html("Discuss with Tutor",           "💬", "#7d3c98", brief["waiting"],   today),
-        _section_html("Submitted – Waiting on Tutor", "📬", "#7f8c8d", brief["submitted"], today),
-        _section_html("Recently Completed",           "✅", "#1e8449", brief["done"],      today),
+        _section_html("Needs Attention",              "🚨", "#c0392b", _cap(brief["urgent"]),    today),
+        _section_html("Upcoming Tasks",               "🎯", "#2471a3", _cap(brief["todo"]),      today),
+        _section_html("Discuss with Tutor",           "💬", "#7d3c98", _cap(brief["waiting"]),   today),
+        _section_html("Submitted – Waiting on Tutor", "📬", "#7f8c8d", _cap(brief["submitted"]), today),
+        _section_html("Recently Completed",           "✅", "#1e8449", _cap(brief["done"]),      today),
     ])
 
     if not body.strip():

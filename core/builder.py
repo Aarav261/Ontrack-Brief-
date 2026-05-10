@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from datetime import date
 
-from constants import GRADE_WEIGHT, URGENT, TODO, WAITING, SUBMITTED, DONE
-from fetcher import (
+from .constants import GRADE_WEIGHT, URGENT, TODO, WAITING, SUBMITTED, DONE
+from .fetcher import (
     fetch_tasks, fetch_last_feedback, _api_auth,
     fetch_tasks_direct, fetch_last_feedback_direct,
 )

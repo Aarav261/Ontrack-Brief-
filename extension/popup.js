@@ -6,6 +6,8 @@ const statusDot       = statusEl.querySelector(".dot");
 const subscribeBtn    = document.getElementById("subscribe-btn");
 const emailInput      = document.getElementById("email");
 const hourSelect      = document.getElementById("hour");
+const recentlyDaysEl  = document.getElementById("recently-days");
+const maxTodoEl       = document.getElementById("max-todo");
 const msgEl           = document.getElementById("msg");
 const unsubRow        = document.getElementById("unsubscribe-row");
 const unsubLink       = document.getElementById("unsubscribe-link");
@@ -251,10 +253,24 @@ function loadSnapshot(authToken, username, baseUrl, force = false, days = 7) {
     );
 
     Promise.race([fetchP, timeoutP])
-      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((r) => {
+        if (!r.ok) {
+          return r.json().then((body) => {
+            if (body.hint === "open_ontrack") {
+              setStatus("warning", "Session expired — open OnTrack to refresh");
+            }
+            throw new Error(`HTTP ${r.status}`);
+          });
+        }
+        return r.json();
+      })
       .then((data) => {
         const ts = Date.now();
         chrome.storage.local.set({ [SNAPSHOT_KEY]: { ts, data } });
+        // Sync the server's fresh token back into chrome.storage
+        if (data.auth_token && data.auth_token !== authToken) {
+          chrome.storage.local.set({ auth_token: data.auth_token });
+        }
         renderStrip(data.days);
         renderTasks(data.days);
         footerSync.textContent = syncLabel(ts);
@@ -277,9 +293,12 @@ refreshBtn.addEventListener("click", () => {
 
 // ── Init ──────────────────────────────────────────────────────────
 
-chrome.storage.local.get(["auth_token", "username", "base_url", "subscribed_email", "strip_weeks"], (data) => {
+chrome.storage.local.get(["auth_token", "username", "base_url", "subscribed_email", "strip_weeks",
+                          "recently_completed_days", "max_todo_tasks"], (data) => {
   const weeks = parseInt(data.strip_weeks || "1", 10);
-  stripWeeksEl.value = String(weeks);
+  stripWeeksEl.value    = String(weeks);
+  if (data.recently_completed_days) recentlyDaysEl.value = String(data.recently_completed_days);
+  if (data.max_todo_tasks)          maxTodoEl.value       = String(data.max_todo_tasks);
 
   if (data.auth_token && data.username) {
     setStatus("ok", `Logged in as ${data.username}`);
@@ -323,15 +342,22 @@ subscribeBtn.addEventListener("click", () => {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
-        base_url:   data.base_url || "https://ontrack.deakin.edu.au",
-        username:   data.username,
-        auth_token: data.auth_token,
-        email, brief_hour: hour,
+        base_url:                data.base_url || "https://ontrack.deakin.edu.au",
+        username:                data.username,
+        auth_token:              data.auth_token,
+        email,
+        brief_hour:              hour,
+        recently_completed_days: recentlyDaysEl.value,
+        max_todo_tasks:          maxTodoEl.value,
       }),
     })
       .then((r) => {
         if (r.ok) {
-          chrome.storage.local.set({ subscribed_email: email });
+          chrome.storage.local.set({
+            subscribed_email:        email,
+            recently_completed_days: recentlyDaysEl.value,
+            max_todo_tasks:          maxTodoEl.value,
+          });
           setStatus("ok", `Subscribed — briefs at ${hourSelect.options[hourSelect.selectedIndex].text}`);
           showMsg("success", "Done! Check your inbox in a moment.");
           unsubRow.style.display = "block";

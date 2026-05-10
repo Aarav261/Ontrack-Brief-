@@ -5,17 +5,20 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import sys
 import tempfile
 import webbrowser
 from datetime import date
 from pathlib import Path
 
-from builder import build_brief
-from constants import CONFIG_PATH
-from fetcher import fetch_active_projects
-from mailer import send_email
-from renderer import render_html
-from scheduler import setup_cron
+sys.path.insert(0, str(Path(__file__).parent.parent))  # project root
+
+from core.builder import build_brief
+from core.constants import CONFIG_PATH
+from core.fetcher import fetch_active_projects
+from core.mailer import send_email
+from core.renderer import render_html
+from scripts.scheduler import setup_cron
 
 
 def main() -> None:
