@@ -1,12 +1,14 @@
 {
   "manifest_version": 3,
   "name": "OnTrack Brief",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Keeps your OnTrack Brief token fresh automatically.",
   "permissions": ["storage"],
   "host_permissions": [
     "https://ontrack.deakin.edu.au/*",
-    "http://localhost:5001/*"
+    "http://localhost:5001/*",
+    "http://localhost:8000/*",
+    "https://*.azurewebsites.net/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -18,13 +20,13 @@
   "content_scripts": [
     {
       "matches": ["https://ontrack.deakin.edu.au/*"],
-      "js": ["content.js"],
+      "js": ["config.js", "content.js"],
       "run_at": "document_start"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["injected.js"],
+      "resources": ["injected.js", "config.js"],
       "matches": ["https://ontrack.deakin.edu.au/*"]
     }
   ]

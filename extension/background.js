@@ -1,4 +1,5 @@
-const APP_URL = "http://localhost:5001";
+// APP_URL is defined in config.js, loaded via importScripts below
+importScripts("config.js");
 
 chrome.runtime.onInstalled.addListener(() => {
   console.debug("[OnTrack Brief] Extension installed/updated.");

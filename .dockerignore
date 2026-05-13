@@ -1,0 +1,13 @@
+config.ini
+*.db
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env.dev
+.env
+.git/
+.gitignore
+README.md
+ARCHITECTURE.md
+scripts/

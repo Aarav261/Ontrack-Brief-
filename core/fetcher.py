@@ -15,30 +15,34 @@ from urllib3.util.retry import Retry
 
 log = logging.getLogger(__name__)
 
-# Shared HTTP session with automatic retry on transient errors
+# Shared HTTP session for one-off calls (validate_token, snapshot endpoint).
+# No global response hook here — token capture is per-session via make_session().
 _http = requests.Session()
 _retry = Retry(total=3, backoff_factor=0.5, status_forcelist={429, 500, 502, 503, 504}, read=0)
 _http.mount("https://", HTTPAdapter(max_retries=_retry))
 _http.mount("http://", HTTPAdapter(max_retries=_retry))
 
-# Doubtfire rotates Auth-Token on every response. We capture the latest value
-# here so callers can retrieve it after any sequence of API calls.
-_last_seen_token: list[str] = []   # list so it's mutable from the closure
 
-def _capture_token(r: requests.Response, **_kwargs) -> None:
-    token = r.headers.get("Auth-Token") or r.headers.get("auth-token") or r.headers.get("x-auth-token")
-    if token:
-        if _last_seen_token:
-            _last_seen_token[0] = token
-        else:
-            _last_seen_token.append(token)
+def make_session() -> tuple[requests.Session, dict]:
+    """Return (session, token_store) with an isolated per-run token capture hook.
 
-_http.hooks["response"].append(_capture_token)
+    Doubtfire rotates Auth-Token on every response. Using one session per brief
+    run ensures concurrent jobs don't overwrite each other's tokens.
+    Check token_store['last'] after API calls to get the most recently seen token.
+    """
+    token_store: dict[str, str | None] = {"last": None}
+    session = requests.Session()
+    session.mount("https://", HTTPAdapter(max_retries=_retry))
+    session.mount("http://", HTTPAdapter(max_retries=_retry))
 
+    def _capture(r: requests.Response, **_kwargs) -> None:
+        token = (r.headers.get("Auth-Token") or r.headers.get("auth-token")
+                 or r.headers.get("x-auth-token"))
+        if token:
+            token_store["last"] = token
 
-def get_last_seen_token() -> str | None:
-    """Return the most-recently seen Auth-Token across all API calls, or None."""
-    return _last_seen_token[0] if _last_seen_token else None
+    session.hooks["response"].append(_capture)
+    return session, token_store
 
 
 # ---------------------------------------------------------------------------
@@ -53,14 +57,18 @@ class TokenExpiredError(Exception):
     """Raised when the OnTrack API rejects credentials (401/419)."""
 
 
-def validate_token(base_url: str, auth_token: str, username: str) -> tuple[bool, str]:
+def validate_token(
+    base_url: str, auth_token: str, username: str,
+    session: requests.Session | None = None,
+) -> tuple[bool, str]:
     """Return (is_valid, current_token).
 
     Doubtfire rotates auth_token on each request and returns the new value
     in the Auth-Token response header.  We capture it so the DB stays fresh.
     """
+    http = session or _http
     try:
-        r = _http.get(
+        r = http.get(
             f"{base_url}/api/unit_roles",
             headers=_headers(auth_token, username),
             timeout=10,
@@ -80,10 +88,12 @@ def validate_token(base_url: str, auth_token: str, username: str) -> tuple[bool,
 
 
 def fetch_active_projects_direct(
-    base_url: str, auth_token: str, username: str
+    base_url: str, auth_token: str, username: str,
+    session: requests.Session | None = None,
 ) -> tuple[list[dict], str]:
     """Return (projects, current_token) — token may be refreshed by the server."""
-    r = _http.get(
+    http = session or _http
+    r = http.get(
         f"{base_url}/api/projects",
         headers=_headers(auth_token, username),
         timeout=15,
@@ -102,8 +112,12 @@ def fetch_active_projects_direct(
     return projects, refreshed
 
 
-def fetch_tasks_direct(base_url: str, auth_token: str, username: str, project_id: int) -> list[dict]:
-    r = _http.get(
+def fetch_tasks_direct(
+    base_url: str, auth_token: str, username: str, project_id: int,
+    session: requests.Session | None = None,
+) -> list[dict]:
+    http = session or _http
+    r = http.get(
         f"{base_url}/api/projects/{project_id}",
         headers=_headers(auth_token, username),
         timeout=15,
@@ -112,13 +126,11 @@ def fetch_tasks_direct(base_url: str, auth_token: str, username: str, project_id
     data  = r.json()
     tasks = data.get("tasks", [])
 
-    # task_definitions are not embedded in the project response — fetch the full unit separately
-    # (mirrors what ontrack-cli does: get_project() + get_unit(item.unit.id))
     unit_id = data.get("unit_id") or (data.get("unit") or {}).get("id")
     task_defs = []
     if unit_id:
         try:
-            unit_r = _http.get(
+            unit_r = http.get(
                 f"{base_url}/api/units/{unit_id}",
                 headers=_headers(auth_token, username),
                 timeout=15,
@@ -177,10 +189,12 @@ def fetch_last_feedback_direct(
     project_id: int,
     task_def_id: int,
     student_id: int | None,
+    session: requests.Session | None = None,
 ) -> str | None:
+    http = session or _http
     url = f"{base_url}/api/projects/{project_id}/task_def_id/{task_def_id}/comments"
     try:
-        r = _http.get(url, headers=_headers(auth_token, username), timeout=10)
+        r = http.get(url, headers=_headers(auth_token, username), timeout=10)
         r.raise_for_status()
     except requests.RequestException as exc:
         log.warning("Could not fetch feedback for task_def %s: %s", task_def_id, exc)

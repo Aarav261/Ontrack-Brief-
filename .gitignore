@@ -1,4 +1,6 @@
 config.ini
+.env
+.env.dev
 *.log
 __pycache__/
 *.pyc

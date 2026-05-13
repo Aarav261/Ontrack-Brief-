@@ -1,4 +1,4 @@
-const APP_URL = "http://localhost:5001";
+// APP_URL is defined in config.js, loaded before this script via popup.html
 
 const statusEl        = document.getElementById("status");
 const statusText      = document.getElementById("status-text");

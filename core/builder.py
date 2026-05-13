@@ -95,6 +95,7 @@ def build_brief_direct(
     username: str,
     projects: list[dict],
     recently_completed_days: int = 7,
+    session=None,
 ) -> dict:
     today = date.today()
     urgent, todo, waiting, submitted, done = [], [], [], [], []
@@ -108,7 +109,7 @@ def build_brief_direct(
         project_id = project["id"]
         unit_code  = project["unit"]["code"]
 
-        for task in fetch_tasks_direct(base_url, auth_token, username, project_id):
+        for task in fetch_tasks_direct(base_url, auth_token, username, project_id, session=session):
             task["_url"] = f"{base_url}/projects/{project_id}/dashboard/{task['abbreviation']}"
             status = task["status"]
 
@@ -120,6 +121,7 @@ def build_brief_direct(
                 feedback = fetch_last_feedback_direct(
                     base_url, auth_token, username,
                     project_id, task["task_definition_id"], student_id,
+                    session=session,
                 )
                 urgent.append((task, unit_code, feedback))
             elif status in TODO:
@@ -128,6 +130,7 @@ def build_brief_direct(
                 feedback = fetch_last_feedback_direct(
                     base_url, auth_token, username,
                     project_id, task["task_definition_id"], student_id,
+                    session=session,
                 )
                 waiting.append((task, unit_code, feedback))
             elif status in SUBMITTED:

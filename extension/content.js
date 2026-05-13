@@ -3,7 +3,7 @@
  * and forwards captured tokens to the extension storage + app server.
  */
 
-const APP_URL = "http://localhost:5001";  // Change to deployed URL when hosted
+// APP_URL is defined in config.js, loaded before this script via manifest.json
 
 // Inject interceptor into page context
 const script = document.createElement("script");

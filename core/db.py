@@ -1,50 +1,123 @@
-"""SQLite persistence for web app users."""
+"""Database persistence — PostgreSQL (prod, set DATABASE_URL) or SQLite (local dev)."""
 
 from __future__ import annotations
 
 import logging
 import os
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
-
-DB_PATH = Path(os.environ.get("DB_PATH", str(Path(__file__).parent.parent / "ontracker.db")))
 
 log = logging.getLogger(__name__)
 
+_DATABASE_URL = os.environ.get("DATABASE_URL", "")
+_DB_PATH = Path(os.environ.get("DB_PATH", str(Path(__file__).parent.parent / "ontracker.db")))
+_USE_PG = _DATABASE_URL.startswith(("postgresql://", "postgres://"))
+
+if _USE_PG:
+    import psycopg2
+    import psycopg2.extras
+
+# SQL placeholder: %s for psycopg2, ? for sqlite3
+_P = "%s" if _USE_PG else "?"
+
+
+@contextmanager
+def _connection():
+    if _USE_PG:
+        conn = psycopg2.connect(_DATABASE_URL)
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    else:
+        conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
 
 def init_db() -> None:
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                base_url    TEXT NOT NULL,
-                username    TEXT NOT NULL,
-                auth_token  TEXT NOT NULL,
-                email       TEXT NOT NULL UNIQUE,
-                brief_hour  INTEGER NOT NULL DEFAULT 8,
-                token_valid INTEGER NOT NULL DEFAULT 1,
-                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
-        # Migrate existing DB that lacks token_valid column
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
-        if "token_valid" not in cols:
-            conn.execute("ALTER TABLE users ADD COLUMN token_valid INTEGER NOT NULL DEFAULT 1")
-        if "recently_completed_days" not in cols:
-            conn.execute("ALTER TABLE users ADD COLUMN recently_completed_days INTEGER NOT NULL DEFAULT 7")
-        if "max_todo_tasks" not in cols:
-            conn.execute("ALTER TABLE users ADD COLUMN max_todo_tasks INTEGER NOT NULL DEFAULT 10")
+    with _connection() as conn:
+        cur = conn.cursor()
+        if _USE_PG:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id                      SERIAL PRIMARY KEY,
+                    base_url                TEXT NOT NULL,
+                    username                TEXT NOT NULL,
+                    auth_token              TEXT NOT NULL,
+                    email                   TEXT NOT NULL UNIQUE,
+                    brief_hour              INTEGER NOT NULL DEFAULT 8,
+                    token_valid             INTEGER NOT NULL DEFAULT 1,
+                    recently_completed_days INTEGER NOT NULL DEFAULT 7,
+                    max_todo_tasks          INTEGER NOT NULL DEFAULT 10,
+                    created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+        else:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                    base_url                TEXT NOT NULL,
+                    username                TEXT NOT NULL,
+                    auth_token              TEXT NOT NULL,
+                    email                   TEXT NOT NULL UNIQUE,
+                    brief_hour              INTEGER NOT NULL DEFAULT 8,
+                    token_valid             INTEGER NOT NULL DEFAULT 1,
+                    recently_completed_days INTEGER NOT NULL DEFAULT 7,
+                    max_todo_tasks          INTEGER NOT NULL DEFAULT 10,
+                    created_at              TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            # Migrate existing SQLite DBs that predate newer columns
+            cols = {r[1] for r in cur.execute("PRAGMA table_info(users)").fetchall()}
+            for col, typedef in [
+                ("token_valid", "INTEGER NOT NULL DEFAULT 1"),
+                ("recently_completed_days", "INTEGER NOT NULL DEFAULT 7"),
+                ("max_todo_tasks", "INTEGER NOT NULL DEFAULT 10"),
+            ]:
+                if col not in cols:
+                    cur.execute(f"ALTER TABLE users ADD COLUMN {col} {typedef}")
 
 
 def upsert_user(base_url: str, username: str, auth_token: str, email: str,
                 brief_hour: int = 8, token_valid: int = 1,
                 recently_completed_days: int = 7, max_todo_tasks: int = 10) -> int:
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute("""
+    with _connection() as conn:
+        cur = conn.cursor()
+        if _USE_PG:
+            cur.execute(f"""
                 INSERT INTO users (base_url, username, auth_token, email, brief_hour, token_valid,
                                    recently_completed_days, max_todo_tasks)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES ({_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P})
+                ON CONFLICT(email) DO UPDATE SET
+                    base_url                = EXCLUDED.base_url,
+                    username                = EXCLUDED.username,
+                    auth_token              = EXCLUDED.auth_token,
+                    brief_hour              = EXCLUDED.brief_hour,
+                    token_valid             = EXCLUDED.token_valid,
+                    recently_completed_days = EXCLUDED.recently_completed_days,
+                    max_todo_tasks          = EXCLUDED.max_todo_tasks
+                RETURNING id
+            """, (base_url, username, auth_token, email, brief_hour, token_valid,
+                  recently_completed_days, max_todo_tasks))
+            return cur.fetchone()[0]
+        else:
+            cur.execute(f"""
+                INSERT INTO users (base_url, username, auth_token, email, brief_hour, token_valid,
+                                   recently_completed_days, max_todo_tasks)
+                VALUES ({_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P})
                 ON CONFLICT(email) DO UPDATE SET
                     base_url                = excluded.base_url,
                     username                = excluded.username,
@@ -55,35 +128,46 @@ def upsert_user(base_url: str, username: str, auth_token: str, email: str,
                     max_todo_tasks          = excluded.max_todo_tasks
             """, (base_url, username, auth_token, email, brief_hour, token_valid,
                   recently_completed_days, max_todo_tasks))
-            return conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()[0]
-    except sqlite3.Error as exc:
-        log.error("Database error upserting user %s: %s", email, exc)
-        raise
+            return cur.execute(f"SELECT id FROM users WHERE email = {_P}", (email,)).fetchone()[0]
 
 
 def mark_token_invalid(email: str) -> None:
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute("UPDATE users SET token_valid = 0 WHERE email = ?", (email,))
-    except sqlite3.Error as exc:
-        log.error("Database error marking token invalid for %s: %s", email, exc)
-        raise
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.execute(f"UPDATE users SET token_valid = 0 WHERE email = {_P}", (email,))
 
 
 def get_all_users() -> list[dict]:
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
-            return [dict(r) for r in conn.execute("SELECT * FROM users").fetchall()]
-    except sqlite3.Error as exc:
-        log.error("Database error loading users: %s", exc)
-        return []
+    with _connection() as conn:
+        if _USE_PG:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute("SELECT * FROM users")
+            return [dict(r) for r in cur.fetchall()]
+        else:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM users")
+            return [dict(r) for r in cur.fetchall()]
+
+
+def get_user_by_username(username: str) -> dict | None:
+    with _connection() as conn:
+        if _USE_PG:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        else:
+            cur = conn.cursor()
+        cur.execute(f"SELECT * FROM users WHERE username = {_P}", (username,))
+        row = cur.fetchone()
+        return dict(row) if row else None
 
 
 def remove_user(email: str) -> None:
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute("DELETE FROM users WHERE email = ?", (email,))
-    except sqlite3.Error as exc:
-        log.error("Database error removing user %s: %s", email, exc)
-        raise
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.execute(f"DELETE FROM users WHERE email = {_P}", (email,))
+
+
+def get_sqlalchemy_url() -> str:
+    if _USE_PG:
+        # SQLAlchemy 2.x requires postgresql:// not postgres://
+        return _DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    return f"sqlite:///{_DB_PATH}"

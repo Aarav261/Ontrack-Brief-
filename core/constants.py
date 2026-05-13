@@ -1,9 +1,5 @@
 """Shared lookup tables and status-set constants."""
 
-from pathlib import Path
-
-CONFIG_PATH = Path(__file__).parent.parent / "config.ini"
-
 GRADE_WEIGHT = {
     "HD (High Distinction)": 3,
     "D (Distinction)": 2,
