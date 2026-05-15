@@ -62,9 +62,27 @@ def init_db() -> None:
                     token_valid             INTEGER NOT NULL DEFAULT 1,
                     recently_completed_days INTEGER NOT NULL DEFAULT 7,
                     max_todo_tasks          INTEGER NOT NULL DEFAULT 10,
+                    last_snapshot           TEXT,
                     created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
                 )
             """)
+            # Migrate existing PG DBs
+            for col, typedef in [
+                ("token_valid", "INTEGER NOT NULL DEFAULT 1"),
+                ("recently_completed_days", "INTEGER NOT NULL DEFAULT 7"),
+                ("max_todo_tasks", "INTEGER NOT NULL DEFAULT 10"),
+                ("last_snapshot", "TEXT"),
+            ]:
+                cur.execute(f"""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                       WHERE table_name='users' AND column_name='{col}') THEN
+                            ALTER TABLE users ADD COLUMN {col} {typedef};
+                        END IF;
+                    END
+                    $$;
+                """)
         else:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
@@ -77,6 +95,7 @@ def init_db() -> None:
                     token_valid             INTEGER NOT NULL DEFAULT 1,
                     recently_completed_days INTEGER NOT NULL DEFAULT 7,
                     max_todo_tasks          INTEGER NOT NULL DEFAULT 10,
+                    last_snapshot           TEXT,
                     created_at              TEXT NOT NULL DEFAULT (datetime('now'))
                 )
             """)
@@ -86,6 +105,7 @@ def init_db() -> None:
                 ("token_valid", "INTEGER NOT NULL DEFAULT 1"),
                 ("recently_completed_days", "INTEGER NOT NULL DEFAULT 7"),
                 ("max_todo_tasks", "INTEGER NOT NULL DEFAULT 10"),
+                ("last_snapshot", "TEXT"),
             ]:
                 if col not in cols:
                     cur.execute(f"ALTER TABLE users ADD COLUMN {col} {typedef}")
@@ -131,6 +151,13 @@ def upsert_user(base_url: str, username: str, auth_token: str, email: str,
             return cur.execute(f"SELECT id FROM users WHERE email = {_P}", (email,)).fetchone()[0]
 
 
+def update_user_snapshot(username: str, snapshot_json: str) -> None:
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.execute(f"UPDATE users SET last_snapshot = {_P} WHERE username = {_P}",
+                    (snapshot_json, username))
+
+
 def mark_token_invalid(email: str) -> None:
     with _connection() as conn:
         cur = conn.cursor()
@@ -147,6 +174,17 @@ def get_all_users() -> list[dict]:
             cur = conn.cursor()
             cur.execute("SELECT * FROM users")
             return [dict(r) for r in cur.fetchall()]
+
+
+def get_user_by_id(user_id: int) -> dict | None:
+    with _connection() as conn:
+        if _USE_PG:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        else:
+            cur = conn.cursor()
+        cur.execute(f"SELECT * FROM users WHERE id = {_P}", (user_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
 
 
 def get_user_by_username(username: str) -> dict | None:

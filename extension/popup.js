@@ -12,6 +12,12 @@ const msgEl           = document.getElementById("msg");
 const unsubRow        = document.getElementById("unsubscribe-row");
 const unsubLink       = document.getElementById("unsubscribe-link");
 const snapshotSection = document.getElementById("snapshot-section");
+const noAuthSection   = document.getElementById("no-auth-section");
+const signupSection   = document.getElementById("signup-section");
+const signupEmail     = document.getElementById("signup-email");
+const signupBtn       = document.getElementById("signup-btn");
+const signupMsg       = document.getElementById("signup-msg");
+const skipSignup      = document.getElementById("skip-signup");
 const stripLoading    = document.getElementById("strip-loading");
 const stripRow        = document.getElementById("strip-row");
 const stripTooltip    = document.getElementById("strip-tooltip");
@@ -27,6 +33,33 @@ const settingsBtn     = document.getElementById("settings-btn");
 const tabMain         = document.getElementById("tab-main");
 const tabSettings     = document.getElementById("tab-settings");
 const stripWeeksEl    = document.getElementById("strip-weeks");
+
+// ── State Machine ─────────────────────────────────────────────────
+
+function updateView(data) {
+  const hasToken = data.auth_token && data.username;
+  const isSubscribed = !!data.subscribed_email;
+  const skippedSignup = !!data.signup_skipped;
+
+  noAuthSection.style.display = "none";
+  signupSection.style.display = "none";
+  snapshotSection.style.display = "none";
+
+  if (!hasToken) {
+    noAuthSection.style.display = "block";
+    setStatus("warning", "Open OnTrack — your tasks will appear automatically");
+  } else if (!isSubscribed && !skippedSignup) {
+    signupSection.style.display = "block";
+    setStatus("ok", `Logged in as ${data.username}`);
+    footerUser.textContent = data.username;
+  } else {
+    snapshotSection.style.display = "block";
+    setStatus("ok", `Logged in as ${data.username}`);
+    footerUser.textContent = data.username;
+    const weeks = parseInt(data.strip_weeks || "1", 10);
+    loadSnapshot(data.auth_token, data.username, data.base_url, false, weeks * 7);
+  }
+}
 
 // ── Tab switching ─────────────────────────────────────────────────
 function switchTab(tab) {
@@ -226,6 +259,7 @@ let _snapshotAuth = null;
 function loadSnapshot(authToken, username, baseUrl, force = false, days = 7) {
   _snapshotAuth = { authToken, username, baseUrl, days };
 
+  noAuthSection.style.display   = "none";
   snapshotSection.style.display = "block";
   stripLoading.style.display    = "flex";
   stripRow.style.display        = "none";
@@ -266,14 +300,20 @@ function loadSnapshot(authToken, username, baseUrl, force = false, days = 7) {
       })
       .then((data) => {
         const ts = Date.now();
-        chrome.storage.local.set({ [SNAPSHOT_KEY]: { ts, data } });
+        if (data.is_stale) {
+          setStatus("warning", "Session expired — open OnTrack for latest updates");
+        } else {
+          setStatus("ok", `Logged in as ${username}`);
+          chrome.storage.local.set({ [SNAPSHOT_KEY]: { ts, data } });
+        }
+
         // Sync the server's fresh token back into chrome.storage
         if (data.auth_token && data.auth_token !== authToken) {
           chrome.storage.local.set({ auth_token: data.auth_token });
         }
         renderStrip(data.days);
         renderTasks(data.days);
-        footerSync.textContent = syncLabel(ts);
+        footerSync.textContent = data.is_stale ? "Stale Data" : syncLabel(ts);
       })
       .catch((err) => {
         console.warn("[OnTrack Brief] Snapshot failed:", err);
@@ -294,28 +334,72 @@ refreshBtn.addEventListener("click", () => {
 // ── Init ──────────────────────────────────────────────────────────
 
 chrome.storage.local.get(["auth_token", "username", "base_url", "subscribed_email", "strip_weeks",
-                          "recently_completed_days", "max_todo_tasks"], (data) => {
+                          "recently_completed_days", "max_todo_tasks", "signup_skipped"], (data) => {
   const weeks = parseInt(data.strip_weeks || "1", 10);
   stripWeeksEl.value    = String(weeks);
   if (data.recently_completed_days) recentlyDaysEl.value = String(data.recently_completed_days);
   if (data.max_todo_tasks)          maxTodoEl.value       = String(data.max_todo_tasks);
 
-  if (data.auth_token && data.username) {
-    setStatus("ok", `Logged in as ${data.username}`);
-    footerUser.textContent = data.username;
-    subscribeBtn.disabled = false;
-    switchTab("main");
-    loadSnapshot(data.auth_token, data.username, data.base_url, false, weeks * 7);
+  switchTab("main");
+  updateView(data);
 
-    if (data.subscribed_email) {
-      emailInput.value       = data.subscribed_email;
-      unsubRow.style.display = "block";
-    }
-  } else {
-    setStatus("warning", "Open OnTrack first — then subscribe in Settings");
-    subscribeBtn.disabled = true;
-    switchTab("settings");
+  if (data.subscribed_email) {
+    emailInput.value       = data.subscribed_email;
+    unsubRow.style.display = "block";
   }
+});
+
+// ── Sign Up ───────────────────────────────────────────────────────
+
+signupBtn.addEventListener("click", () => {
+  const email = signupEmail.value.trim();
+  if (!email || !email.includes("@")) {
+    signupMsg.className = "msg error";
+    signupMsg.textContent = "Enter a valid email address.";
+    return;
+  }
+
+  chrome.storage.local.get(["auth_token", "username", "base_url"], (data) => {
+    signupBtn.disabled = true;
+    signupBtn.textContent = "Setting up…";
+
+    fetch(`${APP_URL}/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        base_url: data.base_url || "https://ontrack.deakin.edu.au",
+        username: data.username,
+        auth_token: data.auth_token,
+        email,
+        brief_hour: 8
+      }),
+    })
+      .then((r) => r.json())
+      .then((res) => {
+        if (res.ok) {
+          chrome.storage.local.set({ subscribed_email: email }, () => {
+            chrome.storage.local.get(null, (all) => updateView(all));
+          });
+        } else {
+          signupMsg.className = "msg error";
+          signupMsg.textContent = res.error || "Signup failed.";
+        }
+      })
+      .catch(() => {
+        signupMsg.className = "msg error";
+        signupMsg.textContent = "Could not reach server.";
+      })
+      .finally(() => {
+        signupBtn.disabled = false;
+        signupBtn.textContent = "Subscribe to Email Briefs";
+      });
+  });
+});
+
+skipSignup.addEventListener("click", () => {
+  chrome.storage.local.set({ signup_skipped: true }, () => {
+    chrome.storage.local.get(null, (all) => updateView(all));
+  });
 });
 
 // ── Subscribe ─────────────────────────────────────────────────────
@@ -336,7 +420,7 @@ subscribeBtn.addEventListener("click", () => {
     }
 
     subscribeBtn.disabled    = true;
-    subscribeBtn.textContent = "Subscribing…";
+    subscribeBtn.textContent = "Enabling…";
 
     fetch(`${APP_URL}/setup`, {
       method: "POST",
@@ -358,7 +442,7 @@ subscribeBtn.addEventListener("click", () => {
             recently_completed_days: recentlyDaysEl.value,
             max_todo_tasks:          maxTodoEl.value,
           });
-          setStatus("ok", `Subscribed — briefs at ${hourSelect.options[hourSelect.selectedIndex].text}`);
+          setStatus("ok", `Email briefs enabled — daily at ${hourSelect.options[hourSelect.selectedIndex].text}`);
           showMsg("success", "Done! Check your inbox in a moment.");
           unsubRow.style.display = "block";
         } else if (r.status === 400) {
@@ -372,7 +456,7 @@ subscribeBtn.addEventListener("click", () => {
       })
       .finally(() => {
         subscribeBtn.disabled    = false;
-        subscribeBtn.textContent = "Subscribe";
+        subscribeBtn.textContent = "Enable email briefs";
       });
   });
 });
