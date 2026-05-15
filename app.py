@@ -20,10 +20,7 @@ def create_app() -> Flask:
     app = Flask(__name__)
     app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 
-    CORS(app, resources={
-        r"/refresh-token": {"origins": "*"},
-        r"/api/snapshot":  {"origins": "*"},
-    })
+    CORS(app, resources={r"/*": {"origins": "*"}})
 
     # Initialize extensions
     limiter.init_app(app)

@@ -51,9 +51,7 @@ def send_reauth_email(recipient: str, app_url: str) -> bool:
 <html><body style="font-family:sans-serif;max-width:560px;margin:32px auto;color:#333">
   <h2 style="color:#c0392b">&#x26A0; OnTrack Brief \u2014 Re-authentication needed</h2>
   <p>Your OnTrack session has expired. To continue receiving your daily briefs,
-     please re-subscribe using the bookmarklet:</p>
-  <p><a href="{app_url}" style="background:#1a5fa8;color:#fff;padding:10px 20px;
-     border-radius:5px;text-decoration:none;display:inline-block">Re-subscribe \u2192</a></p>
+     open the <strong>OnTrack Brief</strong> Chrome extension and log into OnTrack — your token will refresh automatically.</p>
   <p style="color:#888;font-size:12px">Tip: you don&rsquo;t need to stay logged in to OnTrack &mdash;
      just don&rsquo;t click <em>Log Out</em>.</p>
 </body></html>"""

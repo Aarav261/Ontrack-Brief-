@@ -33,30 +33,39 @@ def index():
     return "OnTrack Brief API is running."
 
 
-@main_bp.route("/register", methods=["POST"])
-@limiter.limit("10 per minute")
-def register():
-    data       = request.get_json(silent=True) or {}
+def _process_user_setup(data: dict) -> tuple[int | None, tuple[dict, int] | None]:
     base_url   = data.get("base_url", "https://ontrack.deakin.edu.au").rstrip("/")
     username   = data.get("username", "").strip()
     auth_token = data.get("auth_token", "").strip()
     email      = data.get("email", "").strip()
-    brief_hour = max(0, min(23, int(data.get("brief_hour", 8))))
-    
-    recently_completed_days = 7
-    max_todo_tasks = 10
+    try:
+        brief_hour = max(0, min(23, int(data.get("brief_hour", 8))))
+        recently_days = max(1, int(data.get("recently_completed_days", 7)))
+        max_todo = max(1, int(data.get("max_todo_tasks", 10)))
+    except (ValueError, TypeError):
+        return None, ({"ok": False, "error": "invalid numbers"}, 400)
 
     if not username or not auth_token or not email:
-        return {"ok": False, "error": "missing fields"}, 400
+        return None, ({"ok": False, "error": "missing fields"}, 400)
 
     valid, auth_token = validate_token(base_url, auth_token, username)
     if not valid:
-        return {"ok": False, "error": "invalid token"}, 401
+        return None, ({"ok": False, "error": "invalid token"}, 401)
 
     user_id = upsert_user(base_url, username, auth_token, email, brief_hour,
-                          recently_completed_days=recently_completed_days,
-                          max_todo_tasks=max_todo_tasks)
+                          recently_completed_days=recently_days,
+                          max_todo_tasks=max_todo)
     schedule_brief(user_id, brief_hour)
+    return user_id, None
+
+
+@main_bp.route("/register", methods=["POST"])
+@limiter.limit("10 per minute")
+def register():
+    data = request.get_json(silent=True) or {}
+    user_id, err_resp = _process_user_setup(data)
+    if err_resp:
+        return err_resp[0], err_resp[1]
 
     scheduler.add_job(
         run_brief,
@@ -65,8 +74,32 @@ def register():
         id=f"welcome_{user_id}",
         replace_existing=True,
     )
-    log.info("First brief for %s (via register) scheduled in 10 seconds", email)
+    log.info("First brief for user_id=%s (via register) scheduled in 10 seconds", user_id)
 
+    return {"ok": True}
+
+
+@main_bp.route("/setup", methods=["POST"])
+@limiter.limit("10 per minute")
+def setup():
+    """Update email-brief settings for an already-authenticated user."""
+    raw = request.get_json(silent=True)
+    if raw is None:
+        raw = {k: v for k, v in request.form.items()}
+    data = raw or {}
+
+    user_id, err_resp = _process_user_setup(data)
+    if err_resp:
+        return err_resp[0], err_resp[1]
+
+    scheduler.add_job(
+        run_brief,
+        DateTrigger(run_date=datetime.now() + timedelta(seconds=10)),
+        args=[user_id],
+        id=f"welcome_{user_id}",
+        replace_existing=True,
+    )
+    log.info("Settings updated for user_id=%s — immediate brief scheduled", user_id)
     return {"ok": True}
 
 

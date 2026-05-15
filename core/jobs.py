@@ -14,7 +14,7 @@ from core.renderer import render_html
 from extensions import scheduler
 
 log = logging.getLogger(__name__)
-APP_URL = os.environ.get("APP_URL", "http://localhost:5001/")
+APP_URL = os.environ.get("APP_URL", "http://localhost:8000/")
 
 def run_brief(user_id: int) -> None:
     user = get_user_by_id(user_id)
@@ -36,7 +36,10 @@ def run_brief(user_id: int) -> None:
         projects, fresh_token = fetch_active_projects_direct(base_url, auth_token, username, session=session)
         if fresh_token != auth_token:
             log.info("Token rotated for %s — updating DB", username)
-            upsert_user(base_url, username, fresh_token, email)
+            upsert_user(base_url, username, fresh_token, email,
+                        brief_hour=user.get("brief_hour", 8),
+                        recently_completed_days=recently_completed_days,
+                        max_todo_tasks=max_todo_tasks)
         if not projects:
             return
         brief = build_brief_direct(base_url, fresh_token, username, projects,
@@ -44,7 +47,10 @@ def run_brief(user_id: int) -> None:
                                    session=session)
         final_token = token_store["last"] or fresh_token
         if final_token != fresh_token:
-            upsert_user(base_url, username, final_token, email)
+            upsert_user(base_url, username, final_token, email,
+                        brief_hour=user.get("brief_hour", 8),
+                        recently_completed_days=recently_completed_days,
+                        max_todo_tasks=max_todo_tasks)
         html = render_html(brief, projects, date.today(), max_todo=max_todo_tasks)
         send_brief_to(html, email, date.today())
     except TokenExpiredError:
