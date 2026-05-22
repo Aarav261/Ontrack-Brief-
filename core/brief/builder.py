@@ -51,17 +51,22 @@ def _score(task: dict, today: date) -> tuple:
     return (red_band, -grade_weight, days_left, tier)
 
 
-def build_brief(projects: list[dict], recently_completed_days: int = 7) -> dict:
+def _build_brief(
+    projects: list[dict],
+    *,
+    base_url: str,
+    recently_completed_days: int,
+    task_fetcher,
+    feedback_fetcher,
+) -> dict:
     today = date.today()
     urgent, todo, waiting, submitted, done = [], [], [], [], []
-
-    base_url, _, _ = _api_auth()
 
     for project in projects:
         project_id = project["id"]
         unit_code  = project["unit"]["code"]
 
-        for task in fetch_tasks(project_id):
+        for task in task_fetcher(project_id):
             task["_url"] = f"{base_url}/projects/{project_id}/dashboard/{task['abbreviation']}"
             status = task["status"]
 
@@ -70,12 +75,12 @@ def build_brief(projects: list[dict], recently_completed_days: int = 7) -> dict:
                 if comp and (today - date.fromisoformat(comp)).days <= recently_completed_days:
                     done.append((task, unit_code, None))
             elif status in URGENT:
-                feedback = fetch_last_feedback(project_id, task["task_definition_id"])
+                feedback = feedback_fetcher(project_id, task["task_definition_id"])
                 urgent.append((task, unit_code, feedback))
             elif status in TODO:
                 todo.append((task, unit_code, None))
             elif status in WAITING:
-                feedback = fetch_last_feedback(project_id, task["task_definition_id"])
+                feedback = feedback_fetcher(project_id, task["task_definition_id"])
                 waiting.append((task, unit_code, feedback))
             elif status in SUBMITTED:
                 submitted.append((task, unit_code, None))
@@ -88,6 +93,24 @@ def build_brief(projects: list[dict], recently_completed_days: int = 7) -> dict:
     done.sort(key=lambda e: e[0].get("completion_date", ""), reverse=True)
 
     return {"urgent": urgent, "todo": todo, "waiting": waiting, "submitted": submitted, "done": done}
+
+
+def build_brief(projects: list[dict], recently_completed_days: int = 7) -> dict:
+    base_url, _, _ = _api_auth()
+
+    def task_fetcher(project_id: int) -> list[dict]:
+        return fetch_tasks(project_id)
+
+    def feedback_fetcher(project_id: int, task_def_id: int) -> str | None:
+        return fetch_last_feedback(project_id, task_def_id)
+
+    return _build_brief(
+        projects,
+        base_url=base_url,
+        recently_completed_days=recently_completed_days,
+        task_fetcher=task_fetcher,
+        feedback_fetcher=feedback_fetcher,
+    )
 
 
 def build_brief_direct(
@@ -98,50 +121,29 @@ def build_brief_direct(
     recently_completed_days: int = 7,
     session=None,
 ) -> dict:
-    today = date.today()
-    urgent, todo, waiting, submitted, done = [], [], [], [], []
-
     student_id: int | None = None
     if projects:
         user = projects[0].get("user") or {}
         student_id = user.get("id")
 
-    for project in projects:
-        project_id = project["id"]
-        unit_code  = project["unit"]["code"]
+    def task_fetcher(project_id: int) -> list[dict]:
+        return fetch_tasks_direct(base_url, auth_token, username, project_id, session=session)
 
-        for task in fetch_tasks_direct(base_url, auth_token, username, project_id, session=session):
-            task["_url"] = f"{base_url}/projects/{project_id}/dashboard/{task['abbreviation']}"
-            status = task["status"]
+    def feedback_fetcher(project_id: int, task_def_id: int) -> str | None:
+        return fetch_last_feedback_direct(
+            base_url,
+            auth_token,
+            username,
+            project_id,
+            task_def_id,
+            student_id,
+            session=session,
+        )
 
-            if status in DONE:
-                comp = task.get("completion_date")
-                if comp and (today - date.fromisoformat(comp)).days <= recently_completed_days:
-                    done.append((task, unit_code, None))
-            elif status in URGENT:
-                feedback = fetch_last_feedback_direct(
-                    base_url, auth_token, username,
-                    project_id, task["task_definition_id"], student_id,
-                    session=session,
-                )
-                urgent.append((task, unit_code, feedback))
-            elif status in TODO:
-                todo.append((task, unit_code, None))
-            elif status in WAITING:
-                feedback = fetch_last_feedback_direct(
-                    base_url, auth_token, username,
-                    project_id, task["task_definition_id"], student_id,
-                    session=session,
-                )
-                waiting.append((task, unit_code, feedback))
-            elif status in SUBMITTED:
-                submitted.append((task, unit_code, None))
-
-    sort_key = lambda e: _score(e[0], today)
-    urgent.sort(key=sort_key)
-    todo.sort(key=sort_key)
-    waiting.sort(key=sort_key)
-    submitted.sort(key=sort_key)
-    done.sort(key=lambda e: e[0].get("completion_date", ""), reverse=True)
-
-    return {"urgent": urgent, "todo": todo, "waiting": waiting, "submitted": submitted, "done": done}
+    return _build_brief(
+        projects,
+        base_url=base_url,
+        recently_completed_days=recently_completed_days,
+        task_fetcher=task_fetcher,
+        feedback_fetcher=feedback_fetcher,
+    )

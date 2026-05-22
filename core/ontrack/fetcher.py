@@ -29,6 +29,80 @@ log = logging.getLogger(__name__)
 # Per-user token capture is owned by core.auth.TokenManager.
 _http = new_session()
 
+_GRADE_LABELS = {0: "P (Pass)", 1: "C (Credit)", 2: "D (Distinction)", 3: "HD (High Distinction)"}
+
+
+def _enrich_tasks(tasks: list[dict], task_defs: list[dict]) -> None:
+    td_by_id = {td["id"]: td for td in task_defs}
+    for t in tasks:
+        td = td_by_id.get(t["task_definition_id"], {})
+        t["abbreviation"]       = t.get("abbreviation") or td.get("abbreviation", "")
+        t["name"]               = t.get("name") or td.get("name", "")
+        t["target_grade"]       = t.get("target_grade") if t.get("target_grade") is not None else td.get("target_grade")
+        t["target_grade_label"] = _GRADE_LABELS.get(t.get("target_grade"), "P (Pass)")
+        t["due_date"]           = t.get("due_date") or td.get("target_date") or td.get("due_date")
+        t["deadline"]           = t.get("deadline") or td.get("due_date")
+        t["status_label"]       = t.get("status_label") or t.get("status", "").replace("_", " ").title()
+
+
+def _append_missing_tasks(tasks: list[dict], task_defs: list[dict]) -> None:
+    submitted_def_ids = {t["task_definition_id"] for t in tasks}
+    today = date.today().isoformat()
+    for td in task_defs:
+        if td["id"] in submitted_def_ids:
+            continue
+        if td.get("start_date", "0000") > today:
+            continue
+        tasks.append({
+            "id":                 None,
+            "task_definition_id": td["id"],
+            "abbreviation":       td["abbreviation"],
+            "name":               td["name"],
+            "status":             "not_started",
+            "status_label":       "Not Started",
+            "target_grade":       td.get("target_grade"),
+            "target_grade_label": _GRADE_LABELS.get(td.get("target_grade"), "P (Pass)"),
+            "due_date":           td.get("target_date") or td.get("due_date"),
+            "deadline":           td.get("due_date"),
+            "submission_date":    None,
+            "completion_date":    None,
+            "extensions":         0,
+            "grade":              None,
+            "is_overdue":         False,
+        })
+
+
+def _extract_latest_feedback(comments: list, student_id: int | None) -> str | None:
+    if not isinstance(comments, list):
+        return None
+    for comment in reversed(comments):
+        if comment.get("type") != "text":
+            continue
+        author_id = (comment.get("author") or {}).get("id")
+        if author_id and author_id == student_id:
+            continue
+        text = (comment.get("comment") or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _fetch_feedback(
+    task_def_id: int,
+    url: str,
+    headers: dict,
+    student_id: int | None,
+    session: requests.Session | None = None,
+) -> str | None:
+    http = session or _http
+    try:
+        r = http.get(url, headers=headers, timeout=10)
+        r.raise_for_status()
+    except requests.RequestException as exc:
+        log.warning("Could not fetch feedback for task_def %s: %s", task_def_id, exc)
+        return None
+    return _extract_latest_feedback(r.json(), student_id)
+
 
 # ---------------------------------------------------------------------------
 # Direct API helpers (used by the web app — no ontrack CLI dependency)
@@ -97,42 +171,8 @@ def fetch_tasks_direct(
     else:
         log.warning("No unit_id found in project %s response — task names will be blank", project_id)
 
-    td_by_id = {td["id"]: td for td in task_defs}
-    for t in tasks:
-        td = td_by_id.get(t["task_definition_id"], {})
-        t["abbreviation"]       = t.get("abbreviation") or td.get("abbreviation", "")
-        t["name"]               = t.get("name") or td.get("name", "")
-        t["target_grade"]       = t.get("target_grade") if t.get("target_grade") is not None else td.get("target_grade")
-        t["target_grade_label"] = _GRADE_LABELS.get(t["target_grade"], "P (Pass)")
-        t["due_date"]           = t.get("due_date") or td.get("target_date") or td.get("due_date")
-        t["deadline"]           = t.get("deadline") or td.get("due_date")
-        t["status_label"]       = t.get("status_label") or t.get("status", "").replace("_", " ").title()
-
-    submitted_def_ids = {t["task_definition_id"] for t in tasks}
-    today = date.today().isoformat()
-
-    for td in task_defs:
-        if td["id"] in submitted_def_ids:
-            continue
-        if td.get("start_date", "0000") > today:
-            continue
-        tasks.append({
-            "id":                 None,
-            "task_definition_id": td["id"],
-            "abbreviation":       td["abbreviation"],
-            "name":               td["name"],
-            "status":             "not_started",
-            "status_label":       "Not Started",
-            "target_grade":       td.get("target_grade"),
-            "target_grade_label": _GRADE_LABELS.get(td.get("target_grade"), "P (Pass)"),
-            "due_date":           td.get("target_date") or td.get("due_date"),
-            "deadline":           td.get("due_date"),
-            "submission_date":    None,
-            "completion_date":    None,
-            "extensions":         0,
-            "grade":              None,
-            "is_overdue":         False,
-        })
+    _enrich_tasks(tasks, task_defs)
+    _append_missing_tasks(tasks, task_defs)
 
     return tasks
 
@@ -146,32 +186,9 @@ def fetch_last_feedback_direct(
     student_id: int | None,
     session: requests.Session | None = None,
 ) -> str | None:
-    http = session or _http
     url = f"{base_url}/api/projects/{project_id}/task_def_id/{task_def_id}/comments"
-    try:
-        r = http.get(url, headers=_headers(auth_token, username), timeout=10)
-        r.raise_for_status()
-    except requests.RequestException as exc:
-        log.warning("Could not fetch feedback for task_def %s: %s", task_def_id, exc)
-        return None
-
-    comments = r.json()
-    if not isinstance(comments, list):
-        return None
-
-    for comment in reversed(comments):
-        if comment.get("type") != "text":
-            continue
-        author_id = (comment.get("author") or {}).get("id")
-        if author_id and author_id == student_id:
-            continue
-        text = (comment.get("comment") or "").strip()
-        if text:
-            return text
-
-    return None
-
-_GRADE_LABELS = {0: "P (Pass)", 1: "C (Credit)", 2: "D (Distinction)", 3: "HD (High Distinction)"}
+    headers = _headers(auth_token, username)
+    return _fetch_feedback(task_def_id, url, headers, student_id, session=session)
 
 
 def _run_ontrack(cmd: list[str]) -> list | dict:
@@ -191,32 +208,9 @@ def fetch_active_projects() -> list[dict]:
 def fetch_tasks(project_id: int) -> list[dict]:
     data = _run_ontrack(["project", str(project_id), "--json"])
     tasks = data["tasks"]
-
-    submitted_def_ids = {t["task_definition_id"] for t in tasks}
-    today = date.today().isoformat()
-
-    for td in data["unit"]["task_definitions"]:
-        if td["id"] in submitted_def_ids:
-            continue
-        if td.get("start_date", "0000") > today:
-            continue
-        tasks.append({
-            "id":                 None,
-            "task_definition_id": td["id"],
-            "abbreviation":       td["abbreviation"],
-            "name":               td["name"],
-            "status":             "not_started",
-            "status_label":       "Not Started",
-            "target_grade":       td.get("target_grade"),
-            "target_grade_label": _GRADE_LABELS.get(td.get("target_grade"), "P (Pass)"),
-            "due_date":           td.get("target_date") or td.get("due_date"),
-            "deadline":           td.get("due_date"),
-            "submission_date":    None,
-            "completion_date":    None,
-            "extensions":         0,
-            "grade":              None,
-            "is_overdue":         False,
-        })
+    task_defs = data["unit"]["task_definitions"]
+    _enrich_tasks(tasks, task_defs)
+    _append_missing_tasks(tasks, task_defs)
 
     return tasks
 
@@ -297,26 +291,4 @@ def fetch_last_feedback(project_id: int, task_def_id: int) -> str | None:
     """Return the most recent tutor text comment, or None."""
     base_url, headers, student_id = _api_auth()
     url = f"{base_url}/api/projects/{project_id}/task_def_id/{task_def_id}/comments"
-
-    try:
-        r = _http.get(url, headers=headers, timeout=10)
-        r.raise_for_status()
-    except requests.RequestException as exc:
-        log.warning("Could not fetch feedback for task_def %s: %s", task_def_id, exc)
-        return None
-
-    comments = r.json()
-    if not isinstance(comments, list):
-        return None
-
-    for comment in reversed(comments):
-        if comment.get("type") != "text":
-            continue
-        author_id = (comment.get("author") or {}).get("id")
-        if author_id and author_id == student_id:
-            continue
-        text = (comment.get("comment") or "").strip()
-        if text:
-            return text
-
-    return None
+    return _fetch_feedback(task_def_id, url, headers, student_id)

@@ -1,12 +1,12 @@
 # OnTrack Morning Brief
 
-A daily prioritised task brief for [OnTrack](https://github.com/doubtfire-lms/doubtfire-web) students. Fetches your active units, scores each task by urgency and grade target, and delivers a formatted HTML email every weekday morning — even when your laptop is closed.
+A weekday email brief for [OnTrack](https://github.com/doubtfire-lms/doubtfire-web) students that prioritises tasks by urgency and grade target, then delivers a clean, link-rich HTML summary each morning—even when your laptop is closed.
 
-Task names in the email link directly to that task's page in OnTrack.
+Each task title links directly to its corresponding OnTrack page.
 
 ## What it does
 
-Every weekday morning it fetches your active OnTrack projects and emails you a brief broken into sections:
+Every weekday morning, the app fetches your active OnTrack projects and emails a brief organised into sections:
 
 | Section | Tasks included |
 |---|---|
@@ -16,15 +16,15 @@ Every weekday morning it fetches your active OnTrack projects and emails you a b
 | 📬 Submitted | Waiting on tutor feedback |
 | ✅ Recently Completed | Finished within the last 7 days |
 
-Tasks are sorted by urgency: red (≤3 days) floats to the top, then sorted by grade target HD → P within each group. Urgent and discuss tasks show the latest tutor comment inline.
+Tasks are ordered by urgency (red ≤ 3 days first), then by grade target (HD → P) within each group. Urgent and discuss tasks include the latest tutor comment inline.
 
 ## How authentication works
 
-OnTrack tokens are long-lived — they survive closing the browser, sleeping your laptop, or switching devices. The only way a token dies is if you explicitly click **Log Out** on OnTrack.
+OnTrack tokens are long-lived and survive browser restarts, sleep, or device changes. A token only expires if you explicitly click **Log Out** in OnTrack.
 
 > **Tip:** Once subscribed, you don't need to stay logged in. Just don't click Log Out — closing the tab is fine.
 
-If your token does expire, the app emails you a re-authentication link and pauses your briefs until you re-subscribe.
+If a token does expire, the app emails a re-authentication link and pauses briefs until you re-subscribe.
 
 ## Quick start
 
@@ -33,7 +33,7 @@ If your token does expire, the app emails you a re-authentication link and pause
 ```bash
 git clone https://github.com/Aarav261/Ontrack-Brief-.git
 cd Ontrack-Brief-
-pip install flask apscheduler requests
+pip install -r requirements.txt
 ```
 
 **2. Configure email credentials**
@@ -42,7 +42,7 @@ pip install flask apscheduler requests
 cp config.ini.template config.ini
 ```
 
-Edit `config.ini` with your Gmail address and [App Password](https://myaccount.google.com/apppasswords).
+Edit `config.ini` with your Gmail address and an [App Password](https://myaccount.google.com/apppasswords).
 
 **3. Run the web app**
 
@@ -50,16 +50,16 @@ Edit `config.ini` with your Gmail address and [App Password](https://myaccount.g
 python app.py
 ```
 
-Open `http://localhost:5001`, drag the bookmarklet to your bookmarks bar, then log into OnTrack and click it. Your token is captured automatically and you're redirected back to the setup form.
+Open `http://localhost:5001`, drag the bookmarklet to your bookmarks bar, then log into OnTrack and click it. Your token is captured automatically and you are redirected back to the setup form.
 
-Enter your email and preferred send hour → Subscribe. A brief is sent within 10 seconds to confirm everything works.
+Enter your email and preferred send hour, then select **Subscribe**. A brief is sent within 10 seconds to confirm everything works.
 
 ## Project structure
 
 ```
-app.py             # Flask web app — bookmarklet setup + APScheduler
+app.py             # Flask app: bookmarklet setup + APScheduler
 builder.py         # Priority scoring and brief assembly
-constants.py       # Grade/status lookup tables and task-status sets
+constants.py       # Grade/status lookups and task-status sets
 db.py              # SQLite persistence for subscribers
 fetcher.py         # OnTrack API calls + TokenExpiredError handling
 mailer.py          # SMTP email delivery + re-auth notification
@@ -77,7 +77,7 @@ config.ini.template
 ## Requirements
 
 - Python 3.10+
-- `pip install flask apscheduler requests`
+- `pip install -r requirements.txt`
 - A Gmail account with [App Passwords](https://myaccount.google.com/apppasswords) enabled
 
 ## Configuration reference
@@ -94,6 +94,7 @@ app_password = xxxx xxxx xxxx xxxx
 ## Unsubscribe
 
 Click the unsubscribe link in any brief email, or visit:
+
 ```
 http://localhost:5001/unsubscribe/<your-email>
 ```
