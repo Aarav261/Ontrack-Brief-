@@ -1,16 +1,15 @@
 import { useState } from 'react';
 
 export default function Settings({
-  initialEmail, initialHour, initialRecentlyDays, initialMaxTodo, initialStripWeeks,
-  subscribedEmail, onSubscribe, onUnsubscribe, onStripWeeksChange,
+  initialEmail, initialHour, initialBriefWeeks, initialStripWeeks,
+  subscribedEmail, onSubscribe, onUnsubscribe, onStripWeeksChange, onBriefWeeksChange,
 }) {
-  const [email,        setEmail]        = useState(initialEmail);
-  const [hour,         setHour]         = useState(initialHour);
-  const [recentlyDays, setRecentlyDays] = useState(initialRecentlyDays);
-  const [maxTodo,      setMaxTodo]      = useState(initialMaxTodo);
-  const [stripWeeks,   setStripWeeks]   = useState(initialStripWeeks);
-  const [loading,      setLoading]      = useState(false);
-  const [msg,          setMsg]          = useState(null);
+  const [email,       setEmail]       = useState(initialEmail);
+  const [hour,        setHour]        = useState(initialHour);
+  const [briefWeeks,  setBriefWeeks]  = useState(initialBriefWeeks);
+  const [stripWeeks,  setStripWeeks]  = useState(initialStripWeeks);
+  const [loading,     setLoading]     = useState(false);
+  const [msg,         setMsg]         = useState(null);
 
   async function handleSubscribe() {
     if (!email || !email.includes('@')) {
@@ -20,7 +19,7 @@ export default function Settings({
     setLoading(true);
     setMsg(null);
     try {
-      await onSubscribe({ email, hour, recentlyDays, maxTodo });
+      await onSubscribe({ email, hour, briefWeeks });
       setMsg({ type: 'success', text: 'Done! Check your inbox in a moment.' });
     } catch (err) {
       let text;
@@ -54,6 +53,11 @@ export default function Settings({
     onStripWeeksChange(parseInt(val, 10));
   }
 
+  function handleBriefWeeksChange(val) {
+    setBriefWeeks(val);
+    onBriefWeeksChange(parseInt(val, 10));
+  }
+
   return (
     <div className="settings-panel">
       <div className="settings-card">
@@ -73,24 +77,10 @@ export default function Settings({
         </div>
 
         <div className="field-group">
-          <label>Recently completed (days back)</label>
-          <select value={recentlyDays} onChange={(e) => setRecentlyDays(e.target.value)}>
-            <option value="3">3 days</option>
-            <option value="5">5 days</option>
-            <option value="7">7 days</option>
-            <option value="14">14 days</option>
-            <option value="30">30 days</option>
-          </select>
-        </div>
-
-        <div className="field-group">
-          <label>Max tasks in email</label>
-          <select value={maxTodo} onChange={(e) => setMaxTodo(e.target.value)}>
-            <option value="5">5 tasks</option>
-            <option value="10">10 tasks</option>
-            <option value="15">15 tasks</option>
-            <option value="20">20 tasks</option>
-            <option value="50">All tasks</option>
+          <label>Brief window</label>
+          <select value={briefWeeks} onChange={(e) => handleBriefWeeksChange(e.target.value)}>
+            <option value="1">1 week (7 days)</option>
+            <option value="2">2 weeks (14 days)</option>
           </select>
         </div>
 

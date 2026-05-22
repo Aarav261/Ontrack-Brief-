@@ -126,6 +126,11 @@ export default function App() {
     }
   };
 
+  const handleBriefWeeksChange = (weeks) => {
+    chrome.storage.local.set({ brief_weeks: String(weeks) });
+    setStorageData((prev) => ({ ...prev, brief_weeks: String(weeks) }));
+  };
+
   const handleSignup = (email) =>
     new Promise((resolve, reject) => {
       chrome.storage.local.get(['auth_token', 'username', 'base_url'], (stored) => {
@@ -161,7 +166,7 @@ export default function App() {
     setStorageData((prev) => ({ ...prev, signup_skipped: true }));
   };
 
-  const handleSubscribe = ({ email, hour, recentlyDays, maxTodo }) =>
+  const handleSubscribe = ({ email, hour, briefWeeks }) =>
     new Promise((resolve, reject) => {
       chrome.storage.local.get(['auth_token', 'username', 'base_url'], (stored) => {
         if (!stored.auth_token || !stored.username) {
@@ -171,17 +176,16 @@ export default function App() {
         api('/setup', {
           method: 'POST',
           body: {
-            base_url:                stored.base_url || DEFAULT_BASE_URL,
-            username:                stored.username,
-            auth_token:              stored.auth_token,
+            base_url:   stored.base_url || DEFAULT_BASE_URL,
+            username:   stored.username,
+            auth_token: stored.auth_token,
             email,
-            brief_hour:              parseInt(hour, 10),
-            recently_completed_days: parseInt(recentlyDays, 10),
-            max_todo_tasks:          parseInt(maxTodo, 10),
+            brief_hour: parseInt(hour, 10),
+            brief_days: parseInt(briefWeeks, 10) * 7,
           },
         })
           .then(() => {
-            chrome.storage.local.set({ subscribed_email: email, recently_completed_days: recentlyDays, max_todo_tasks: maxTodo, brief_hour: hour });
+            chrome.storage.local.set({ subscribed_email: email, brief_hour: hour, brief_weeks: briefWeeks });
             setStorageData((prev) => ({ ...prev, subscribed_email: email }));
             resolve();
           })
@@ -221,13 +225,13 @@ export default function App() {
         <Settings
           initialEmail={storageData.subscribed_email || ''}
           initialHour={storageData.brief_hour || '8'}
-          initialRecentlyDays={storageData.recently_completed_days || '7'}
-          initialMaxTodo={storageData.max_todo_tasks || '10'}
+          initialBriefWeeks={storageData.brief_weeks || '1'}
           initialStripWeeks={storageData.strip_weeks || '1'}
           subscribedEmail={storageData.subscribed_email}
           onSubscribe={handleSubscribe}
           onUnsubscribe={handleUnsubscribe}
           onStripWeeksChange={handleStripWeeksChange}
+          onBriefWeeksChange={handleBriefWeeksChange}
         />
       )}
 

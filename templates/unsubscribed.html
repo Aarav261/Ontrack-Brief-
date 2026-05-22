@@ -3,15 +3,168 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Unsubscribed</title>
+    <title>Unsubscribed from OnTrack Brief</title>
+    <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
     <style>
-        body { font-family: sans-serif; text-align: center; padding-top: 50px; }
-        .success { color: #1e8449; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { overflow: visible; }
+        
+        body {
+            font-family: 'Lora', Georgia, 'Times New Roman', serif;
+            font-size: 13px;
+            color: #0a0a0a;
+            background: linear-gradient(135deg, #e8e8e8 0%, #f5f5f5 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(0, 0, 0, 0.05);
+            max-width: 500px;
+            width: 100%;
+            padding: 48px 32px;
+            text-align: center;
+        }
+        
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 24px;
+        }
+        
+        .logo {
+            font-size: 32px;
+            font-weight: 800;
+            color: #0a0a0a;
+            letter-spacing: -0.5px;
+        }
+        
+        .status-pill {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 10px 16px;
+            border-radius: 8px;
+            background: #d1fae5;
+            color: #065f46;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.1px;
+            margin: 0 auto 24px;
+            width: fit-content;
+        }
+        
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #10b981;
+            flex-shrink: 0;
+        }
+        
+        h1 {
+            font-size: 28px;
+            font-weight: 800;
+            color: #0a0a0a;
+            letter-spacing: -0.4px;
+            margin-bottom: 12px;
+            line-height: 1.2;
+        }
+        
+        .description {
+            font-size: 14px;
+            color: #666;
+            line-height: 1.6;
+            margin-bottom: 20px;
+        }
+        
+        .email-highlight {
+            display: inline-block;
+            background: #f0f0f0;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-weight: 600;
+            color: #4361EE;
+        }
+        
+        .section-divider {
+            width: 40px;
+            height: 2px;
+            background: #e0e0e0;
+            margin: 24px auto;
+        }
+        
+        .resubscribe-text {
+            font-size: 13px;
+            color: #888;
+            line-height: 1.6;
+            margin-bottom: 24px;
+        }
+        
+        .action-btn {
+            display: inline-block;
+            padding: 12px 24px;
+            background: #0a0a0a;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 700;
+            font-family: 'Lora', Georgia, 'Times New Roman', serif;
+            text-decoration: none;
+            cursor: pointer;
+            transition: background 0.15s ease;
+            letter-spacing: 0.1px;
+        }
+        
+        .action-btn:hover {
+            background: #4361EE;
+        }
+        
+        .footer-note {
+            margin-top: 32px;
+            padding-top: 24px;
+            border-top: 1px solid #e8e8e8;
+            font-size: 11px;
+            color: #aaa;
+            letter-spacing: 0.1px;
+        }
     </style>
 </head>
 <body>
-    <h1 class="success">You have been unsubscribed</h1>
-    <p>We've removed {{ email }} from our daily task briefs.</p>
-    <p>You can resubscribe anytime by opening the OnTrack Brief extension.</p>
+    <div class="container">
+        <div class="header">
+            <div class="logo">OnTrack Brief</div>
+        </div>
+        
+        <div class="status-pill">
+            <div class="dot"></div>
+            <span>Unsubscribed</span>
+        </div>
+        
+        <h1>You've been unsubscribed</h1>
+        
+        <p class="description">
+            We've removed <span class="email-highlight">{{ email }}</span> from our daily task briefs.
+        </p>
+        
+        <div class="section-divider"></div>
+        
+        <p class="resubscribe-text">
+            You can resubscribe anytime by opening the OnTrack Brief extension in your browser.
+        </p>
+        
+        <div class="footer-note">
+            Need help? Contact us at support@ontrackbrief.com
+        </div>
+    </div>
 </body>
 </html>
