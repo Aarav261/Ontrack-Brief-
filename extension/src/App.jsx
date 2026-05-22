@@ -6,17 +6,9 @@ import SignupFlow from './components/SignupFlow';
 import SnapshotView from './components/SnapshotView';
 import Settings from './components/Settings';
 import Footer from './components/Footer';
-
-const SNAPSHOT_KEY    = 'snapshot_cache';
-const SNAPSHOT_TTL_MS = 30 * 60 * 1000;
-
-function syncLabel(ts) {
-  const sec = Math.floor((Date.now() - ts) / 1000);
-  if (sec < 60)  return `Synced ${sec}s ago`;
-  const min = Math.floor(sec / 60);
-  if (min < 60)  return `Synced ${min}m ago`;
-  return `Synced ${Math.floor(min / 60)}h ago`;
-}
+import { api } from './lib/api';
+import { syncLabel } from './utils/time';
+import { SNAPSHOT_KEY, SNAPSHOT_TTL_MS, DEFAULT_BASE_URL } from './constants';
 
 export default function App() {
   const [storageData, setStorageData]   = useState(null);
@@ -24,6 +16,7 @@ export default function App() {
   const [statusType, setStatusType]     = useState('warning');
   const [statusText, setStatusText]     = useState('Waiting for OnTrack…');
   const [days, setDays]                 = useState(null);
+  const [feedback, setFeedback]         = useState([]);
   const [stripLoading, setStripLoading] = useState(false);
   const [footerSync, setFooterSync]     = useState('');
   const snapshotAuthRef                 = useRef(null);
@@ -46,40 +39,27 @@ export default function App() {
     snapshotAuthRef.current = { authToken, username, baseUrl, days: numDays };
     setStripLoading(true);
     setDays(null);
+    setFeedback([]);
 
     chrome.storage.local.get([SNAPSHOT_KEY], (stored) => {
       const cached = stored[SNAPSHOT_KEY];
       if (!force && cached?.data && (Date.now() - cached.ts) < SNAPSHOT_TTL_MS) {
         setDays(cached.data.days);
+        setFeedback(cached.data.feedback || []);
         setStripLoading(false);
         setFooterSync(syncLabel(cached.ts));
         return;
       }
 
-      const fetchP = fetch(`${window.APP_URL}/api/snapshot`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
+      api('/api/snapshot', {
+        method: 'POST',
+        body: {
           username,
           auth_token: authToken,
-          base_url:   baseUrl || 'https://ontrack.deakin.edu.au',
+          base_url:   baseUrl || DEFAULT_BASE_URL,
           days:       numDays,
-        }),
-      });
-      const timeoutP = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000));
-
-      Promise.race([fetchP, timeoutP])
-        .then((r) => {
-          if (!r.ok) {
-            return r.json().then((body) => {
-              if (body.hint === 'open_ontrack') {
-                setStatus('warning', 'Session expired — open OnTrack to refresh');
-              }
-              throw new Error(`HTTP ${r.status}`);
-            });
-          }
-          return r.json();
-        })
+        },
+      })
         .then((data) => {
           const ts = Date.now();
           if (data.is_stale) {
@@ -92,10 +72,16 @@ export default function App() {
             chrome.storage.local.set({ auth_token: data.auth_token });
           }
           setDays(data.days);
+          setFeedback(data.feedback || []);
           setFooterSync(data.is_stale ? 'Stale Data' : syncLabel(ts));
         })
         .catch((err) => {
-          setStatus('warning', 'Could not load tasks — is the OnTrack Brief server running on port 5001?');
+          if (err?.data?.hint === 'open_ontrack') {
+            setStatus('warning', 'Session expired — open OnTrack to refresh');
+          } else {
+            setStatus('warning', 'Could not load tasks — is the OnTrack Brief server running on port 5001?');
+          }
+          setFeedback([]);
         })
         .finally(() => setStripLoading(false));
     });
@@ -143,18 +129,16 @@ export default function App() {
   const handleSignup = (email) =>
     new Promise((resolve, reject) => {
       chrome.storage.local.get(['auth_token', 'username', 'base_url'], (stored) => {
-        fetch(`${window.APP_URL}/register`, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({
-            base_url:   stored.base_url || 'https://ontrack.deakin.edu.au',
+        api('/register', {
+          method: 'POST',
+          body: {
+            base_url:   stored.base_url || DEFAULT_BASE_URL,
             username:   stored.username,
             auth_token: stored.auth_token,
             email,
             brief_hour: 8,
-          }),
+          },
         })
-          .then((r) => r.json())
           .then((res) => {
             if (res.ok) {
               chrome.storage.local.set({ subscribed_email: email }, () => {
@@ -163,7 +147,12 @@ export default function App() {
             }
             resolve(res);
           })
-          .catch(reject);
+          .catch((err) => {
+            // A server error response carries the {ok:false, error} body — let
+            // the form surface it. Only a real network failure should reject.
+            if (err?.data && Object.keys(err.data).length) resolve(err.data);
+            else reject(err);
+          });
       });
     });
 
@@ -179,32 +168,29 @@ export default function App() {
           reject(new Error('no-session'));
           return;
         }
-        fetch(`${window.APP_URL}/setup`, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({
-            base_url:                stored.base_url || 'https://ontrack.deakin.edu.au',
+        api('/setup', {
+          method: 'POST',
+          body: {
+            base_url:                stored.base_url || DEFAULT_BASE_URL,
             username:                stored.username,
             auth_token:              stored.auth_token,
             email,
             brief_hour:              parseInt(hour, 10),
             recently_completed_days: parseInt(recentlyDays, 10),
             max_todo_tasks:          parseInt(maxTodo, 10),
-          }),
+          },
         })
-          .then((r) => {
-            if (r.ok) {
-              chrome.storage.local.set({ subscribed_email: email, recently_completed_days: recentlyDays, max_todo_tasks: maxTodo, brief_hour: hour });
-              setStorageData((prev) => ({ ...prev, subscribed_email: email }));
-            }
-            resolve(r);
+          .then(() => {
+            chrome.storage.local.set({ subscribed_email: email, recently_completed_days: recentlyDays, max_todo_tasks: maxTodo, brief_hour: hour });
+            setStorageData((prev) => ({ ...prev, subscribed_email: email }));
+            resolve();
           })
-          .catch(reject);
+          .catch(reject);  // err carries .status for the Settings handler
       });
     });
 
   const handleUnsubscribe = (email) =>
-    fetch(`${window.APP_URL}/unsubscribe/${encodeURIComponent(email)}`)
+    api(`/unsubscribe/${encodeURIComponent(email)}`)
       .then(() => {
         chrome.storage.local.remove(['subscribed_email', 'signup_skipped']);
         setStorageData((prev) => ({ ...prev, subscribed_email: undefined, signup_skipped: undefined }));
@@ -227,7 +213,7 @@ export default function App() {
         <>
           {view === 'no-auth'  && <NoAuth />}
           {view === 'signup'   && <SignupFlow onSignup={handleSignup} onSkip={handleSkipSignup} />}
-          {view === 'snapshot' && <SnapshotView days={days} loading={stripLoading} />}
+          {view === 'snapshot' && <SnapshotView days={days} loading={stripLoading} feedback={feedback} />}
         </>
       )}
 

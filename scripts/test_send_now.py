@@ -16,12 +16,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))  # project root
 
-from core.builder import build_brief_direct
+from core.brief import build_brief_direct, pending_due_entries, render_html
 from core.constants import CONFIG_PATH
 from core.db import get_all_users, upsert_user
-from core.fetcher import fetch_active_projects_direct, get_last_seen_token, TokenExpiredError
 from core.mailer import send_brief_to
-from core.renderer import render_html
+from core.ontrack import fetch_active_projects_direct, TokenExpiredError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -72,8 +71,11 @@ def main() -> None:
         if final_token != fresh_token:
             log.info("Token rotated after build — saving ...%s", final_token[-6:])
             upsert_user(base_url, username, final_token, u["email"], u["brief_hour"])
-        html  = render_html(brief, projects, date.today())
-        ok    = send_brief_to(html, test_email, date.today(), cfg)
+        today = date.today()
+        pending_due = pending_due_entries(brief, today, 14)
+        due_this_week = len(pending_due_entries(brief, today, 6))
+        html = render_html(pending_due, today, window_days=14)
+        ok = send_brief_to(html, test_email, today, due_this_week)
         if ok:
             log.info("✓ Brief sent to %s", test_email)
         else:

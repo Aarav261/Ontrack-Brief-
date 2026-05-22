@@ -30,7 +30,6 @@ export default function TaskList({ days }) {
   return (
     <div className="task-list-section">
       <div className="task-list-header">
-        <span className="task-list-title">Tasks</span>
       </div>
 
       {count === 0 ? (
@@ -42,14 +41,21 @@ export default function TaskList({ days }) {
           const barWidth = Math.max(8, 100 - t.offset * 13);
 
           return (
-            <div key={i} className="task-item">
+            <a
+              key={i}
+              className="task-item"
+              href={t.url || '#'}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={t.url ? `Open in OnTrack: ${t.name}` : t.name}
+            >
               {/* Coloured left accent — replaces the grade icon box */}
               <div className="task-accent" style={{ background: cfg.color }} />
 
               <div className="task-body">
                 <div className="task-name">{t.name}</div>
                 <div className="task-meta">
-                  {t.abbreviation ? `${t.abbreviation} · ` : ''}{t.unit}
+                  {t.unit}
                   {' · '}
                   <span style={{ color: cfg.color, fontWeight: 700 }}>{cfg.short}</span>
                 </div>
@@ -67,7 +73,7 @@ export default function TaskList({ days }) {
                 </div>
                 <div className="task-date">{formatDueDate(t.due_date)}</div>
               </div>
-            </div>
+            </a>
           );
         })
       )}

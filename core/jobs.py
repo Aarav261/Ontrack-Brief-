@@ -5,54 +5,45 @@ from datetime import date, datetime, timedelta
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 
-from core.builder import build_brief_direct
-from core.db import (get_all_users, get_user_by_id, init_db, mark_token_invalid,
-                     upsert_user)
-from core.fetcher import fetch_active_projects_direct, validate_token, TokenExpiredError, make_session
+from core.brief import build_brief_direct, pending_due_entries, render_html
+from core.db import get_all_users, get_user_by_id, init_db, mark_token_invalid
 from core.mailer import send_brief_to, send_reauth_email
-from core.renderer import render_html
+from core.ontrack import TokenManager, TokenExpiredError, fetch_active_projects_direct
 from extensions import scheduler
 
 log = logging.getLogger(__name__)
 APP_URL = os.environ.get("APP_URL", "http://localhost:8000/")
+_PENDING_WINDOW_DAYS = 14
+_THIS_WEEK_DAYS = 6
 
 def run_brief(user_id: int) -> None:
     user = get_user_by_id(user_id)
     if not user:
         log.error("run_brief: no user found for id=%s", user_id)
         return
-    base_url = user["base_url"]
-    auth_token = user["auth_token"]
-    username = user["username"]
     email = user["email"]
     recently_completed_days = user.get("recently_completed_days", 7)
-    max_todo_tasks = user.get("max_todo_tasks", 10)
+
+    # One TokenManager (and its isolated session) per brief run — its response
+    # hook captures every token rotation into tm.token, so concurrent jobs never
+    # clobber each other's tokens. tm.persist() writes the freshest token back.
+    tm = TokenManager.for_user(user)
 
     try:
-        # One isolated session per brief run — prevents token cross-contamination
-        # between concurrent jobs (Doubtfire rotates the token on every response).
-        session, token_store = make_session()
-
-        projects, fresh_token = fetch_active_projects_direct(base_url, auth_token, username, session=session)
-        if fresh_token != auth_token:
-            log.info("Token rotated for %s — updating DB", username)
-            upsert_user(base_url, username, fresh_token, email,
-                        brief_hour=user.get("brief_hour", 8),
-                        recently_completed_days=recently_completed_days,
-                        max_todo_tasks=max_todo_tasks)
+        projects, tm.token = fetch_active_projects_direct(
+            tm.base_url, tm.token, tm.username, session=tm.session)
+        tm.persist(user)  # save the token rotated by the projects call
         if not projects:
             return
-        brief = build_brief_direct(base_url, fresh_token, username, projects,
+        brief = build_brief_direct(tm.base_url, tm.token, tm.username, projects,
                                    recently_completed_days=recently_completed_days,
-                                   session=session)
-        final_token = token_store["last"] or fresh_token
-        if final_token != fresh_token:
-            upsert_user(base_url, username, final_token, email,
-                        brief_hour=user.get("brief_hour", 8),
-                        recently_completed_days=recently_completed_days,
-                        max_todo_tasks=max_todo_tasks)
-        html = render_html(brief, projects, date.today(), max_todo=max_todo_tasks)
-        send_brief_to(html, email, date.today())
+                                   session=tm.session)
+        tm.persist(user)  # save the freshest token seen across the task calls
+        today = date.today()
+        pending_due = pending_due_entries(brief, today, _PENDING_WINDOW_DAYS)
+        due_this_week = len(pending_due_entries(brief, today, _THIS_WEEK_DAYS))
+        html = render_html(pending_due, today, window_days=_PENDING_WINDOW_DAYS)
+        send_brief_to(html, email, today, due_this_week)
     except TokenExpiredError:
         log.warning("Token expired for %s — pausing briefs, waiting for extension to push fresh token", email)
         if scheduler.get_job(f"brief_{user_id}"):
@@ -66,10 +57,9 @@ def run_brief(user_id: int) -> None:
 def refresh_all_tokens() -> None:
     """Single consolidated job — reads fresh from DB every 20 min for all users."""
     for user in get_all_users():
+        tm = TokenManager.for_user(user)
         try:
-            valid, fresh_token = validate_token(
-                user["base_url"], user["auth_token"], user["username"]
-            )
+            valid = tm.validate()
         except Exception as exc:
             log.warning("OnTrack unreachable for %s (service may be down): %s", user["username"], exc)
             continue
@@ -80,12 +70,7 @@ def refresh_all_tokens() -> None:
             mark_token_invalid(user["email"])
             send_reauth_email(user["email"], APP_URL)
             continue
-        if fresh_token != user["auth_token"]:
-            log.info("Token rotated for %s — updating DB", user["username"])
-            upsert_user(user["base_url"], user["username"], fresh_token,
-                        user["email"], user["brief_hour"],
-                        recently_completed_days=user.get("recently_completed_days", 7),
-                        max_todo_tasks=user.get("max_todo_tasks", 10))
+        tm.persist(user)
 
 
 def schedule_brief(user_id: int, brief_hour: int) -> None:

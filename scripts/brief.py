@@ -13,11 +13,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))  # project root
 
-from core.builder import build_brief
+from core.brief import build_brief, pending_due_entries, render_html
 from core.constants import CONFIG_PATH
-from core.fetcher import fetch_active_projects
 from core.mailer import send_email
-from core.renderer import render_html
+from core.ontrack import fetch_active_projects
 from scripts.scheduler import setup_cron
 
 
@@ -44,11 +43,9 @@ def main() -> None:
 
     cfg = configparser.ConfigParser()
     recently_days = 7
-    max_todo      = 10
     if CONFIG_PATH.exists():
         cfg.read(CONFIG_PATH)
         recently_days = cfg.getint("brief", "recently_completed_days", fallback=7)
-        max_todo      = cfg.getint("brief", "max_todo_tasks",          fallback=10)
 
     today = date.today()
     print("Fetching active projects...")
@@ -60,7 +57,8 @@ def main() -> None:
 
     print(f"Units: {', '.join(p['unit']['code'] for p in projects)}")
     brief = build_brief(projects, recently_days)
-    html  = render_html(brief, projects, today, max_todo)
+    pending_due = pending_due_entries(brief, today, 14)
+    html = render_html(pending_due, today, window_days=14)
 
     if args.preview:
         tmp = Path(tempfile.mktemp(suffix=".html"))

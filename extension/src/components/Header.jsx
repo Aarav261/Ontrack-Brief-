@@ -2,7 +2,7 @@ export default function Header({ onSettings, onRefresh, settingsActive }) {
   return (
     <div className="header">
       <div>
-        <div className="header-title">OnTrack Brief</div>
+        <div className="header-title">OnTrack(er)</div>
         <div className="header-subtitle">Your OnTrack tasks, at a glance</div>
       </div>
       <div className="header-right">

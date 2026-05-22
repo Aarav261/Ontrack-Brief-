@@ -1,4 +1,8 @@
-"""OnTrack data fetching — CLI subprocess and direct API calls."""
+"""OnTrack data fetching — CLI subprocess and direct API calls.
+
+Auth — the rotating Auth-Token, header building, validation, and write-back —
+lives in the sibling `auth` module. This is the data layer that consumes it.
+"""
 
 from __future__ import annotations
 
@@ -10,81 +14,37 @@ import sys
 from datetime import date
 
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+
+from .auth import (
+    TokenExpiredError,
+    TokenManager,
+    auth_headers as _headers,
+    extract_token as _extract_token,
+    new_session,
+)
 
 log = logging.getLogger(__name__)
 
-# Shared HTTP session for one-off calls (validate_token, snapshot endpoint).
-# No global response hook here — token capture is per-session via make_session().
-_http = requests.Session()
-_retry = Retry(total=3, backoff_factor=0.5, status_forcelist={429, 500, 502, 503, 504}, read=0)
-_http.mount("https://", HTTPAdapter(max_retries=_retry))
-_http.mount("http://", HTTPAdapter(max_retries=_retry))
-
-
-def make_session() -> tuple[requests.Session, dict]:
-    """Return (session, token_store) with an isolated per-run token capture hook.
-
-    Doubtfire rotates Auth-Token on every response. Using one session per brief
-    run ensures concurrent jobs don't overwrite each other's tokens.
-    Check token_store['last'] after API calls to get the most recently seen token.
-    """
-    token_store: dict[str, str | None] = {"last": None}
-    session = requests.Session()
-    session.mount("https://", HTTPAdapter(max_retries=_retry))
-    session.mount("http://", HTTPAdapter(max_retries=_retry))
-
-    def _capture(r: requests.Response, **_kwargs) -> None:
-        token = (r.headers.get("Auth-Token") or r.headers.get("auth-token")
-                 or r.headers.get("x-auth-token"))
-        if token:
-            token_store["last"] = token
-
-    session.hooks["response"].append(_capture)
-    return session, token_store
+# Shared session for stateless one-off calls (the PDF/feedback helpers below).
+# Per-user token capture is owned by core.auth.TokenManager.
+_http = new_session()
 
 
 # ---------------------------------------------------------------------------
 # Direct API helpers (used by the web app — no ontrack CLI dependency)
 # ---------------------------------------------------------------------------
 
-def _headers(auth_token: str, username: str) -> dict:
-    return {"Username": username, "Auth-Token": auth_token, "Accept": "application/json"}
-
-
-class TokenExpiredError(Exception):
-    """Raised when the OnTrack API rejects credentials (401/419)."""
-
-
 def validate_token(
     base_url: str, auth_token: str, username: str,
     session: requests.Session | None = None,
 ) -> tuple[bool, str]:
-    """Return (is_valid, current_token).
+    """Backward-compatible shim: validate and return (is_valid, current_token).
 
-    Doubtfire rotates auth_token on each request and returns the new value
-    in the Auth-Token response header.  We capture it so the DB stays fresh.
+    New code should use core.auth.TokenManager directly (tm.validate() / tm.token).
+    Kept for the CLI scripts that still call this function.
     """
-    http = session or _http
-    try:
-        r = http.get(
-            f"{base_url}/api/unit_roles",
-            headers=_headers(auth_token, username),
-            timeout=10,
-        )
-        if r.status_code != 200:
-            return False, auth_token
-        refreshed = (
-            r.headers.get("Auth-Token")
-            or r.headers.get("auth-token")
-            or r.headers.get("x-auth-token")
-            or auth_token
-        )
-        log.debug("validate_token: stored=%s…  refreshed=%s…", auth_token[-6:], refreshed[-6:])
-        return True, refreshed
-    except requests.RequestException:
-        raise  # let caller distinguish service-down from token-expired
+    tm = TokenManager(base_url, username, auth_token, session=session)
+    return tm.validate(), tm.token
 
 
 def fetch_active_projects_direct(
@@ -101,12 +61,7 @@ def fetch_active_projects_direct(
     if r.status_code in (401, 419):
         raise TokenExpiredError(f"OnTrack rejected credentials (HTTP {r.status_code})")
     r.raise_for_status()
-    refreshed = (
-        r.headers.get("Auth-Token")
-        or r.headers.get("auth-token")
-        or r.headers.get("x-auth-token")
-        or auth_token
-    )
+    refreshed = _extract_token(r, auth_token)
     today = date.today()
     projects = [p for p in r.json() if date.fromisoformat(p["unit"]["end_date"]) >= today]
     return projects, refreshed

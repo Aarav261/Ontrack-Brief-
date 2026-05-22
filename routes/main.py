@@ -2,15 +2,17 @@ import logging
 import json
 from datetime import date, datetime, timedelta
 
+import requests
 from apscheduler.triggers.date import DateTrigger
 from flask import Blueprint, render_template, request
 
-from core.constants import URGENT, TODO, WAITING
+from core.constants import URGENT, TODO, WAITING, SUBMITTED
 from core.db import (get_all_users, get_user_by_username, remove_user,
                      upsert_user, update_user_snapshot)
-from core.fetcher import (TokenExpiredError, fetch_active_projects_direct,
-                          fetch_tasks_direct, make_session, validate_token)
 from core.jobs import run_brief, schedule_brief
+from core.ontrack import (TokenManager, TokenExpiredError,
+                          fetch_active_projects_direct, fetch_last_feedback_direct,
+                          fetch_tasks_direct)
 from extensions import limiter, scheduler
 
 log = logging.getLogger(__name__)
@@ -48,11 +50,16 @@ def _process_user_setup(data: dict) -> tuple[int | None, tuple[dict, int] | None
     if not username or not auth_token or not email:
         return None, ({"ok": False, "error": "missing fields"}, 400)
 
-    valid, auth_token = validate_token(base_url, auth_token, username)
+    tm = TokenManager(base_url, username, auth_token)
+    try:
+        valid = tm.validate()
+    except requests.RequestException as exc:
+        log.warning("setup: OnTrack unreachable for %s: %s", username, exc)
+        return None, ({"ok": False, "error": "OnTrack unreachable, try again"}, 503)
     if not valid:
         return None, ({"ok": False, "error": "invalid token"}, 401)
 
-    user_id = upsert_user(base_url, username, auth_token, email, brief_hour,
+    user_id = upsert_user(tm.base_url, username, tm.token, email, brief_hour,
                           recently_completed_days=recently_days,
                           max_todo_tasks=max_todo)
     schedule_brief(user_id, brief_hour)
@@ -154,8 +161,11 @@ def api_snapshot():
     else:
         log.warning("api_snapshot: %s not found in DB — using extension token ...%s", username, auth_token[-6:])
 
+    # Dedicated TokenManager so token capture doesn't interfere with brief jobs.
+    tm = TokenManager(base_url, username, auth_token)
+
     try:
-        valid, auth_token = validate_token(base_url, auth_token, username)
+        valid = tm.validate()
     except Exception as exc:
         log.warning("api_snapshot: OnTrack unreachable for %s: %s", username, exc)
         return {"error": "OnTrack unreachable"}, 503
@@ -164,11 +174,8 @@ def api_snapshot():
         log.warning("api_snapshot: token rejected by OnTrack for %s — open OnTrack to refresh", username)
         return _stale_snapshot_response(db_user)
 
-    # Use a dedicated session so token capture doesn't interfere with brief jobs
-    snap_session, snap_tokens = make_session()
-
     try:
-        projects, auth_token = fetch_active_projects_direct(base_url, auth_token, username, session=snap_session)
+        projects, tm.token = fetch_active_projects_direct(tm.base_url, tm.token, tm.username, session=tm.session)
     except TokenExpiredError:
         return _stale_snapshot_response(db_user)
     except Exception as exc:
@@ -177,6 +184,13 @@ def api_snapshot():
 
     today  = date.today()
     ACTIVE = URGENT | TODO | WAITING
+    FEEDBACK_STATUSES = URGENT | TODO | WAITING | SUBMITTED
+    feedback_entries = []
+    feedback_checks = 0
+    student_id = None
+    if projects:
+        user = projects[0].get("user") or {}
+        student_id = user.get("id")
 
     date_index = {}
     days = []
@@ -187,12 +201,12 @@ def api_snapshot():
         days.append({"offset": offset, "date": iso, "label": d.strftime("%a"), "tasks": []})
 
     for project in projects:
+        if len(feedback_entries) >= 3 or feedback_checks >= 8:
+            break
         project_id = project["id"]
         unit_code  = project["unit"]["code"]
         try:
-            tasks = fetch_tasks_direct(base_url, auth_token, username, project_id, session=snap_session)
-            if snap_tokens["last"]:
-                auth_token = snap_tokens["last"]
+            tasks = fetch_tasks_direct(tm.base_url, tm.token, tm.username, project_id, session=tm.session)
         except Exception as exc:
             log.warning("api_snapshot: fetch_tasks failed project %s: %s", project_id, exc)
             continue
@@ -211,11 +225,43 @@ def api_snapshot():
                 "due_date":     due,
                 "url":          f"{base_url}/projects/{project_id}/dashboard/{abbrev}",
             })
+        if len(feedback_entries) >= 3:
+            continue
+        for task in tasks:
+            if task.get("status") not in FEEDBACK_STATUSES:
+                continue
+            if len(feedback_entries) >= 3:
+                break
+            if feedback_checks >= 8:
+                break
+            feedback_checks += 1
+            text = fetch_last_feedback_direct(
+                tm.base_url,
+                tm.token,
+                tm.username,
+                project_id,
+                task.get("task_definition_id"),
+                student_id,
+                session=tm.session,
+            )
+            if not text:
+                continue
+            trimmed = " ".join(text.split())
+            if len(trimmed) > 220:
+                trimmed = trimmed[:217].rstrip() + "..."
+            abbrev = task.get("abbreviation", "")
+            feedback_entries.append({
+                "unit": unit_code,
+                "task": task.get("name", abbrev) or abbrev,
+                "text": trimmed,
+                "url": f"{base_url}/projects/{project_id}/dashboard/{abbrev}",
+            })
 
     response_data = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "days": days,
-        "auth_token": auth_token
+        "feedback": feedback_entries,
+        "auth_token": tm.token
     }
 
     if db_user:

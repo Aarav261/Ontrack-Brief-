@@ -14,19 +14,20 @@ export default function CalendarStrip({ days, loading }) {
   const sectionRef = useRef(null);
   const [tooltip, setTooltip] = useState(null); // { tasks, style }
 
-  function handleMouseEnter(e, day) {
+  function handleMouseMove(e, day) {
     if (!sectionRef.current) return;
-    const colRect = e.currentTarget.getBoundingClientRect();
     const secRect = sectionRef.current.getBoundingClientRect();
-    const colCenter = colRect.left - secRect.left + colRect.width / 2;
-    const colTop    = colRect.top  - secRect.top;
+    const cursorX = e.clientX - secRect.left;
+    const cursorY = e.clientY - secRect.top;
+    const TT_WIDTH = 260;
     setTooltip({
       tasks: day.tasks,
       style: {
-        // Center tooltip over column; clamp so it stays within the card
-        left:      Math.max(6, Math.min(colCenter - 130, secRect.width - 266)) + 'px',
-        top:       colTop + 'px',
-        transform: 'translateY(calc(-100% - 6px))',
+        // Centre horizontally on the cursor; clamp inside the card
+        left:      Math.max(6, Math.min(cursorX - TT_WIDTH / 2, secRect.width - TT_WIDTH - 6)) + 'px',
+        top:       cursorY + 'px',
+        // Sit just above the pointer
+        transform: 'translateY(calc(-100% - 12px))',
       },
     });
   }
@@ -40,8 +41,6 @@ export default function CalendarStrip({ days, loading }) {
   return (
     <div className="strip-section" ref={sectionRef}>
       <div className="strip-header">
-        <span className="strip-title">Schedule</span>
-        <span className="strip-subtitle">Upcoming deadlines</span>
       </div>
 
       {loading && (
@@ -66,7 +65,7 @@ export default function CalendarStrip({ days, loading }) {
                   day.offset === 0 ? 'today'     : '',
                   count > 0       ? 'has-tasks'  : '',
                 ].filter(Boolean).join(' ')}
-                onMouseEnter={count > 0 ? (e) => handleMouseEnter(e, day) : undefined}
+                onMouseMove={count > 0 ? (e) => handleMouseMove(e, day) : undefined}
                 onMouseLeave={count > 0 ? handleMouseLeave : undefined}
               >
                 <span className="strip-day">{day.label}</span>
@@ -81,13 +80,23 @@ export default function CalendarStrip({ days, loading }) {
       )}
 
       {tooltip && (
-        <div className="strip-tooltip visible" style={tooltip.style}>
+        <div
+          className="strip-tooltip visible"
+          style={tooltip.style}
+          onMouseLeave={handleMouseLeave}
+        >
           {tooltip.tasks.map((t, i) => (
-            <span key={i} className="tt-task">
+            <a
+              key={i}
+              className="tt-task"
+              href={t.url || '#'}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
               <span className="tt-unit">{t.unit}</span>
               <span className="tt-name">{t.name}</span>
               <span className="tt-grade">{GRADE_SHORT[t.grade] || t.grade}</span>
-            </span>
+            </a>
           ))}
         </div>
       )}

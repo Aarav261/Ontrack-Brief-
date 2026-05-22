@@ -35,8 +35,9 @@ def _build_message(html: str, subject: str, recipient: str):
     return msg
 
 
-def send_brief_to(html: str, recipient: str, today: date) -> bool:
-    subject = f"OnTrack Brief \u2014 {today.strftime('%a %b %d')}"
+def send_brief_to(html: str, recipient: str, today: date, due_this_week: int) -> bool:
+    task_label = "task" if due_this_week == 1 else "tasks"
+    subject = f"{due_this_week} {task_label} due this week — OnTrack Brief"
     try:
         response = _client().send(_build_message(html, subject, recipient))
         log.info("Brief sent to %s (HTTP %s)", recipient, response.status_code)

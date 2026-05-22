@@ -20,21 +20,20 @@ export default function Settings({
     setLoading(true);
     setMsg(null);
     try {
-      const r = await onSubscribe({ email, hour, recentlyDays, maxTodo });
-      if (r.ok) {
-        setMsg({ type: 'success', text: 'Done! Check your inbox in a moment.' });
-      } else if (r.status === 400) {
-        setMsg({ type: 'error', text: 'Session expired — log out and back in to OnTrack, then try again.' });
-      } else {
-        setMsg({ type: 'error', text: `Server error (${r.status}).` });
-      }
+      await onSubscribe({ email, hour, recentlyDays, maxTodo });
+      setMsg({ type: 'success', text: 'Done! Check your inbox in a moment.' });
     } catch (err) {
-      setMsg({
-        type: 'error',
-        text: err.message === 'no-session'
-          ? 'No OnTrack session found. Open OnTrack first.'
-          : 'Could not reach the OnTrack Brief server.',
-      });
+      let text;
+      if (err.message === 'no-session') {
+        text = 'No OnTrack session found. Open OnTrack first.';
+      } else if (err.status === 400) {
+        text = 'Session expired — log out and back in to OnTrack, then try again.';
+      } else if (err.status) {
+        text = `Server error (${err.status}).`;
+      } else {
+        text = 'Could not reach the OnTrack Brief server.';
+      }
+      setMsg({ type: 'error', text });
     } finally {
       setLoading(false);
     }

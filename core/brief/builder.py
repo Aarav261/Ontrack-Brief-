@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from datetime import date
 
-from .constants import GRADE_WEIGHT, URGENT, TODO, WAITING, SUBMITTED, DONE
-from .fetcher import (
-    fetch_tasks, fetch_last_feedback, _api_auth,
+from core.constants import GRADE_WEIGHT, URGENT, TODO, WAITING, SUBMITTED, DONE
+from core.ontrack import (
+    fetch_tasks, fetch_last_feedback,
     fetch_tasks_direct, fetch_last_feedback_direct,
 )
+from core.ontrack.fetcher import _api_auth
 
 
 def _safe_date(task: dict) -> date:
