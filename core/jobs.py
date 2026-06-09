@@ -16,6 +16,7 @@ APP_URL = os.environ.get("APP_URL", "http://localhost:8000/")
 _PENDING_WINDOW_DAYS = 14
 _THIS_WEEK_DAYS = 6
 
+
 def run_brief(user_id: int) -> None:
     user = get_user_by_id(user_id)
     if not user:
@@ -31,13 +32,19 @@ def run_brief(user_id: int) -> None:
 
     try:
         projects, tm.token = fetch_active_projects_direct(
-            tm.base_url, tm.token, tm.username, session=tm.session)
+            tm.base_url, tm.token, tm.username, session=tm.session
+        )
         tm.persist(user)  # save the token rotated by the projects call
         if not projects:
             return
-        brief = build_brief_direct(tm.base_url, tm.token, tm.username, projects,
-                                   recently_completed_days=recently_completed_days,
-                                   session=tm.session)
+        brief = build_brief_direct(
+            tm.base_url,
+            tm.token,
+            tm.username,
+            projects,
+            recently_completed_days=recently_completed_days,
+            session=tm.session,
+        )
         tm.persist(user)  # save the freshest token seen across the task calls
         today = date.today()
         pending_due = pending_due_entries(brief, today, _PENDING_WINDOW_DAYS)
@@ -45,7 +52,10 @@ def run_brief(user_id: int) -> None:
         html = render_html(pending_due, today, window_days=_PENDING_WINDOW_DAYS)
         send_brief_to(html, email, today, due_this_week)
     except TokenExpiredError:
-        log.warning("Token expired for %s — pausing briefs, waiting for extension to push fresh token", email)
+        log.warning(
+            "Token expired for %s — pausing briefs, waiting for extension to push fresh token",
+            email,
+        )
         if scheduler.get_job(f"brief_{user_id}"):
             scheduler.remove_job(f"brief_{user_id}")
         mark_token_invalid(email)
@@ -61,10 +71,17 @@ def refresh_all_tokens() -> None:
         try:
             valid = tm.validate()
         except Exception as exc:
-            log.warning("OnTrack unreachable for %s (service may be down): %s", user["username"], exc)
+            log.warning(
+                "OnTrack unreachable for %s (service may be down): %s",
+                user["username"],
+                exc,
+            )
             continue
         if not valid:
-            log.warning("Token expired for %s — pausing briefs, waiting for extension to push fresh token", user["username"])
+            log.warning(
+                "Token expired for %s — pausing briefs, waiting for extension to push fresh token",
+                user["username"],
+            )
             if scheduler.get_job(f"brief_{user['id']}"):
                 scheduler.remove_job(f"brief_{user['id']}")
             mark_token_invalid(user["email"])
@@ -80,7 +97,10 @@ def schedule_brief(user_id: int, brief_hour: int) -> None:
         scheduler.reschedule_job(job_id, trigger=trigger)
     else:
         scheduler.add_job(
-            run_brief, trigger, args=[user_id], id=job_id,
+            run_brief,
+            trigger,
+            args=[user_id],
+            id=job_id,
             misfire_grace_time=3600,
             replace_existing=True,
         )

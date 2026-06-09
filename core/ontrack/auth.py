@@ -1,0 +1,161 @@
+"""Centralized handling of Doubtfire's rotating auth token.
+
+Doubtfire rotates the Auth-Token on *every* response, so authentication here is
+not a fetch-and-cache flow (as with an OAuth client) but a continuous chase:
+read the rotated token off each response and persist it. This module is the
+single owner of that lifecycle — header building, token extraction, validation,
+session creation with rotation capture, and write-back to the DB.
+
+A `TokenManager` wraps one user's auth context (base URL, username, current
+token) plus an isolated requests session whose response hook captures each
+rotation into ``self.token``. Construct one per brief run / request so
+concurrent jobs never clobber each other's tokens.
+"""
+
+from __future__ import annotations
+
+import logging
+
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+from core.db import upsert_user
+
+log = logging.getLogger(__name__)
+
+# Retry transient failures at the transport layer.
+RETRY = Retry(
+    total=3, backoff_factor=0.5, status_forcelist={429, 500, 502, 503, 504}, read=0
+)
+
+# Doubtfire returns the rotated token in one of these response headers.
+_TOKEN_HEADERS = ("Auth-Token", "auth-token", "x-auth-token")
+
+# Statuses that mean the token itself is rejected (vs. a transient server error).
+_AUTH_REJECTED = (401, 403, 419)
+
+
+class TokenExpiredError(Exception):
+    """Raised when the OnTrack API rejects credentials (401/419)."""
+
+
+def extract_token(
+    response: requests.Response, fallback: str | None = None
+) -> str | None:
+    """Return the rotated Auth-Token from a Doubtfire response, or ``fallback``.
+
+    Single source of truth for reading the rotating token off a response — every
+    code path goes through here so the header lookup never drifts.
+    """
+    for header in _TOKEN_HEADERS:
+        token = response.headers.get(header)
+        if token:
+            return token
+    return fallback
+
+
+def auth_headers(auth_token: str, username: str) -> dict:
+    """Build the Username/Auth-Token headers every Doubtfire request needs."""
+    return {
+        "Username": username,
+        "Auth-Token": auth_token,
+        "Accept": "application/json",
+    }
+
+
+def new_session(*, capture=None) -> requests.Session:
+    """Create a requests session with retry adapters.
+
+    If ``capture`` is given it is registered as a response hook — used by
+    TokenManager to capture the rotated token off every response.
+    """
+    session = requests.Session()
+    adapter = HTTPAdapter(max_retries=RETRY)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    if capture is not None:
+        session.hooks["response"].append(capture)
+    return session
+
+
+class TokenManager:
+    """Owns one user's rotating Doubtfire token and its isolated session.
+
+    Doubtfire rotates the Auth-Token on every response; the session's response
+    hook captures each rotation into ``self.token``. Build one per brief run /
+    request so concurrent jobs never overwrite each other's tokens.
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        username: str,
+        auth_token: str,
+        *,
+        session: requests.Session | None = None,
+    ):
+        self.base_url = (base_url or "").rstrip("/")
+        self.username = username
+        self.token = auth_token
+        # Own a capturing session unless the caller supplied one.
+        self.session = session or new_session(capture=self._capture)
+
+    @classmethod
+    def for_user(
+        cls, user: dict, *, session: requests.Session | None = None
+    ) -> "TokenManager":
+        """Build a TokenManager from a DB user row."""
+        return cls(
+            user["base_url"], user["username"], user["auth_token"], session=session
+        )
+
+    def _capture(self, response: requests.Response, **_kwargs) -> None:
+        token = extract_token(response)
+        if token:
+            self.token = token
+
+    @property
+    def headers(self) -> dict:
+        return auth_headers(self.token, self.username)
+
+    def validate(self) -> bool:
+        """Return True if OnTrack accepts the current token, capturing any rotation.
+
+        Only an auth-rejection status (401/403/419) reports the token as invalid.
+        Any other non-2xx is a transient/service problem and is raised, so callers
+        treat it as "OnTrack unreachable" rather than pausing briefs and emailing a
+        re-auth prompt over a server hiccup. RequestException propagates the same way.
+        """
+        r = self.session.get(
+            f"{self.base_url}/api/unit_roles", headers=self.headers, timeout=10
+        )
+        if r.status_code in _AUTH_REJECTED:
+            return False
+        if not r.ok:
+            raise requests.HTTPError(
+                f"OnTrack returned HTTP {r.status_code}", response=r
+            )
+        log.debug(
+            "validate: token for %s accepted (…%s)", self.username, self.token[-6:]
+        )
+        return True
+
+    def persist(self, user: dict) -> str:
+        """Write the current token back to the DB if it rotated since ``user``.
+
+        Returns the current token. No-op when the token is unchanged, so callers
+        can call it unconditionally after a batch of requests.
+        """
+        if self.token and self.token != user["auth_token"]:
+            log.info("Token rotated for %s — updating DB", self.username)
+            upsert_user(
+                self.base_url,
+                self.username,
+                self.token,
+                user["email"],
+                brief_hour=user.get("brief_hour", 8),
+                recently_completed_days=user.get("recently_completed_days", 7),
+                max_todo_tasks=user.get("max_todo_tasks", 10),
+            )
+        return self.token

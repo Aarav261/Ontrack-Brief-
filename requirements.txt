@@ -4,6 +4,10 @@ flask-limiter~=3.5
 apscheduler~=3.10
 sqlalchemy~=2.0
 requests~=2.32
+cryptography>=42.0
 sendgrid~=6.11
 psycopg2-binary~=2.9
 gunicorn~=21.2
+
+# dev tooling
+ruff~=0.6

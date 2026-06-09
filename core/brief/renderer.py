@@ -19,7 +19,9 @@ def pending_due_entries(brief: dict, today: date, days_ahead: int) -> list[dict]
             days = (due - today).days
             if 0 <= days <= days_ahead:
                 entries.append({"task": task, "unit": unit, "due": due})
-    entries.sort(key=lambda entry: (entry["due"], entry["unit"], entry["task"].get("name", "")))
+    entries.sort(
+        key=lambda entry: (entry["due"], entry["unit"], entry["task"].get("name", ""))
+    )
     return entries
 
 
@@ -65,17 +67,17 @@ def _task_row(entry: dict, today: date) -> str:
 
     due_color = _due_color(due, today)
     return (
-        f'<tr>'
+        f"<tr>"
         f'<td style="padding:10px 12px 10px 0;font-size:11px;font-family:monospace;'
         f'color:#666666;white-space:nowrap;border-bottom:1px solid #e8e8e8">{unit_code}</td>'
         f'<td style="padding:10px 12px 10px 0;font-size:11px;font-family:monospace;'
         f'color:#9a9a9a;white-space:nowrap;border-bottom:1px solid #e8e8e8">{abbrev}</td>'
         f'<td style="padding:10px 18px 10px 0;font-size:13px;border-bottom:1px solid #e8e8e8;width:99%">'
-        f'{name_cell}</td>'
+        f"{name_cell}</td>"
         f'<td style="padding:10px 0;border-bottom:1px solid #e8e8e8;white-space:nowrap;'
         f'font-size:12px;color:{due_color};font-weight:700">'
-        f'{_due_label(due, today)}</td>'
-        f'</tr>'
+        f"{_due_label(due, today)}</td>"
+        f"</tr>"
     )
 
 

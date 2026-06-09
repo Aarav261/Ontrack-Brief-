@@ -13,6 +13,7 @@ _SANDBOX = os.environ.get("SENDGRID_SANDBOX", "false").lower() == "true"
 
 def _client():
     from sendgrid import SendGridAPIClient
+
     api_key = os.environ.get("SENDGRID_API_KEY")
     if not api_key:
         raise RuntimeError("SENDGRID_API_KEY environment variable is not set")
@@ -21,6 +22,7 @@ def _client():
 
 def _build_message(html: str, subject: str, recipient: str):
     from sendgrid.helpers.mail import Mail, MailSettings, SandBoxMode
+
     sender = os.environ.get("SENDGRID_FROM_EMAIL", "briefs@example.com")
     msg = Mail(
         from_email=sender,

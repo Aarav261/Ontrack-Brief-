@@ -34,8 +34,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-DEFAULT_BASE_URL  = "https://ontrack.deakin.edu.au"
-DEFAULT_APP_URL   = "http://localhost:8000"
+DEFAULT_BASE_URL = "https://ontrack.deakin.edu.au"
+DEFAULT_APP_URL = "http://localhost:8000"
 DEFAULT_PING_SECS = 300
 
 SESSION_FILE = Path(__file__).parent / ".ontrack_session.json"
@@ -65,7 +65,11 @@ async def _grab_token(page) -> str | None:
             if val and isinstance(val, str) and len(val) > 8:
                 if val.startswith("{"):
                     obj = json.loads(val)
-                    t = obj.get("auth_token") or obj.get("authToken") or obj.get("token")
+                    t = (
+                        obj.get("auth_token")
+                        or obj.get("authToken")
+                        or obj.get("token")
+                    )
                     if t:
                         return t
                 else:
@@ -91,7 +95,7 @@ async def _login_and_save_session(base_url: str, pw) -> None:
     log.info("Opening browser for login (SSO + MFA as normal)...")
     browser = await pw.chromium.launch(headless=False)
     context = await browser.new_context()
-    page    = await context.new_page()
+    page = await context.new_page()
     await page.goto(base_url)
 
     loop = asyncio.get_event_loop()
@@ -103,12 +107,14 @@ async def _login_and_save_session(base_url: str, pw) -> None:
     await browser.close()
 
 
-async def _run_headless(base_url: str, username: str, app_url: str, ping_interval: int, pw) -> None:
+async def _run_headless(
+    base_url: str, username: str, app_url: str, ping_interval: int, pw
+) -> None:
     """Run the keep-alive loop in a headless browser using the saved session."""
     log.info("Starting headless browser with saved session...")
     browser = await pw.chromium.launch(headless=True)
     context = await browser.new_context(storage_state=str(SESSION_FILE))
-    page    = await context.new_page()
+    page = await context.new_page()
 
     current_token: list[str | None] = [None]
 
@@ -121,7 +127,7 @@ async def _run_headless(base_url: str, username: str, app_url: str, ping_interva
     # Passive header capture
     async def _handle_request(request) -> None:
         try:
-            t = (request.headers.get("auth-token") or request.headers.get("Auth-Token"))
+            t = request.headers.get("auth-token") or request.headers.get("Auth-Token")
             if t:
                 _on_token(t)
         except Exception:
@@ -129,13 +135,13 @@ async def _run_headless(base_url: str, username: str, app_url: str, ping_interva
 
     async def _handle_response(response) -> None:
         try:
-            t = (response.headers.get("auth-token") or response.headers.get("Auth-Token"))
+            t = response.headers.get("auth-token") or response.headers.get("Auth-Token")
             if t:
                 _on_token(t)
         except Exception:
             pass
 
-    page.on("request",  _handle_request)
+    page.on("request", _handle_request)
     page.on("response", _handle_response)
 
     await page.goto(base_url)
@@ -146,7 +152,9 @@ async def _run_headless(base_url: str, username: str, app_url: str, ping_interva
         _on_token(token)
         log.info("Initial token captured: ...%s", token[-8:])
     else:
-        log.warning("Could not capture initial token — session may have expired. Re-run with --relogin.")
+        log.warning(
+            "Could not capture initial token — session may have expired. Re-run with --relogin."
+        )
 
     log.info("Headless. Pinging every %ds. Press Ctrl+C to stop.", ping_interval)
 
@@ -162,7 +170,7 @@ async def _run_headless(base_url: str, username: str, app_url: str, ping_interva
                 };
             }""")
             status = result.get("status") if result else "?"
-            token  = result.get("token")  if result else None
+            token = result.get("token") if result else None
 
             if status in (401, 419):
                 log.warning("Session expired (HTTP %s). Re-run with --relogin.", status)
@@ -180,11 +188,15 @@ async def _run_headless(base_url: str, username: str, app_url: str, ping_interva
             log.warning("Ping error: %s", exc)
 
 
-async def run(base_url: str, username: str, app_url: str, ping_interval: int, relogin: bool) -> None:
+async def run(
+    base_url: str, username: str, app_url: str, ping_interval: int, relogin: bool
+) -> None:
     try:
         from playwright.async_api import async_playwright
     except ImportError:
-        log.error("Playwright not installed. Run:  pip install playwright && playwright install chromium")
+        log.error(
+            "Playwright not installed. Run:  pip install playwright && playwright install chromium"
+        )
         sys.exit(1)
 
     async with async_playwright() as pw:
@@ -198,15 +210,27 @@ async def run(base_url: str, username: str, app_url: str, ping_interval: int, re
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--username",      required=True,             help="Your OnTrack username")
-    parser.add_argument("--base-url",      default=DEFAULT_BASE_URL)
-    parser.add_argument("--app-url",       default=DEFAULT_APP_URL)
+    parser.add_argument("--username", required=True, help="Your OnTrack username")
+    parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
+    parser.add_argument("--app-url", default=DEFAULT_APP_URL)
     parser.add_argument("--ping-interval", type=int, default=DEFAULT_PING_SECS)
-    parser.add_argument("--relogin",       action="store_true",       help="Force a fresh login even if a session exists")
+    parser.add_argument(
+        "--relogin",
+        action="store_true",
+        help="Force a fresh login even if a session exists",
+    )
     args = parser.parse_args()
 
     try:
-        asyncio.run(run(args.base_url, args.username, args.app_url, args.ping_interval, args.relogin))
+        asyncio.run(
+            run(
+                args.base_url,
+                args.username,
+                args.app_url,
+                args.ping_interval,
+                args.relogin,
+            )
+        )
     except KeyboardInterrupt:
         log.info("Stopped.")
 

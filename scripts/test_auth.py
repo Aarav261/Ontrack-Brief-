@@ -27,7 +27,9 @@ DEFAULT_BASE_URL = "https://ontrack.deakin.edu.au"
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--username", required=True, help="OnTrack username")
-    parser.add_argument("--password", help="OnTrack password / auth_token (prompted if omitted)")
+    parser.add_argument(
+        "--password", help="OnTrack password / auth_token (prompted if omitted)"
+    )
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="OnTrack base URL")
     args = parser.parse_args()
 

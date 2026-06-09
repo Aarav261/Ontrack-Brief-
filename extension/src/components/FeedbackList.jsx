@@ -1,10 +1,10 @@
 function truncateLabel(text, max = 42) {
-  if (!text) return '';
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+  if (!text) return ''
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text
 }
 
 export default function FeedbackList({ items }) {
-  const entries = items || [];
+  const entries = items || []
   return (
     <div className="feedback-section">
       <div className="feedback-title">Tutor feedback</div>
@@ -29,5 +29,5 @@ export default function FeedbackList({ items }) {
         ))
       )}
     </div>
-  );
+  )
 }

@@ -1,7 +1,7 @@
-import StatsRow from './StatsRow';
-import CalendarStrip from './CalendarStrip';
-import TaskList from './TaskList';
-import FeedbackList from './FeedbackList';
+import StatsRow from './StatsRow'
+import CalendarStrip from './CalendarStrip'
+import TaskList from './TaskList'
+import FeedbackList from './FeedbackList'
 
 export default function SnapshotView({ days, loading, feedback }) {
   return (
@@ -14,5 +14,5 @@ export default function SnapshotView({ days, loading, feedback }) {
       <TaskList days={days} />
       <FeedbackList items={feedback} />
     </>
-  );
+  )
 }

@@ -1,0 +1,9 @@
+# Ruff config for the Python backend (linter + formatter)
+line-length = 100
+target-version = "py311"
+
+extend-exclude = ["venv", "Ontrack", "__pycache__", "scripts/migrations"]
+
+[lint]
+# E/W: pycodestyle, F: pyflakes, I: isort, UP: pyupgrade, B: flake8-bugbear
+select = ["E", "W", "F", "I", "UP", "B"]

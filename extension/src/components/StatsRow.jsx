@@ -1,9 +1,11 @@
 export default function StatsRow({ days }) {
-  const allTasks = (days || []).flatMap((d) => d.tasks.map((t) => ({ ...t, offset: d.offset })));
-  const urgent   = allTasks.filter((t) => t.offset <= 3).length;
-  const soon     = allTasks.filter((t) => t.offset >  3).length;
-  const total    = allTasks.length;
-  const loaded   = days !== null;
+  const allTasks = (days || []).flatMap((d) =>
+    d.tasks.map((t) => ({ ...t, offset: d.offset }))
+  )
+  const urgent = allTasks.filter((t) => t.offset <= 3).length
+  const soon = allTasks.filter((t) => t.offset > 3).length
+  const total = allTasks.length
+  const loaded = days !== null
 
   return (
     <div className="stats-row">
@@ -20,5 +22,5 @@ export default function StatsRow({ days }) {
         <div className="stat-value">{loaded ? total : '—'}</div>
       </div>
     </div>
-  );
+  )
 }

@@ -25,9 +25,12 @@ from core.ontrack import fetch_active_projects_direct, TokenExpiredError
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--token", help="Override the auth token from the DB (paste from popup)")
+    parser.add_argument(
+        "--token", help="Override the auth token from the DB (paste from popup)"
+    )
     args = parser.parse_args()
 
     cfg = configparser.ConfigParser()
@@ -45,9 +48,9 @@ def main() -> None:
 
     u = next((u for u in users if u["email"] == test_email), users[0])
 
-    base_url   = u["base_url"]
+    base_url = u["base_url"]
     auth_token = args.token.strip() if args.token else u["auth_token"]
-    username   = u["username"]
+    username = u["username"]
 
     if args.token:
         log.info("Using token from --token argument")
@@ -56,9 +59,15 @@ def main() -> None:
     log.info("Token (last 8): ...%s", auth_token[-8:] if auth_token else "NONE")
 
     try:
-        projects, fresh_token = fetch_active_projects_direct(base_url, auth_token, username)
+        projects, fresh_token = fetch_active_projects_direct(
+            base_url, auth_token, username
+        )
         if fresh_token != auth_token:
-            log.info("Token rotated — was ...%s, now ...%s", auth_token[-6:], fresh_token[-6:])
+            log.info(
+                "Token rotated — was ...%s, now ...%s",
+                auth_token[-6:],
+                fresh_token[-6:],
+            )
             upsert_user(base_url, username, fresh_token, u["email"], u["brief_hour"])
 
         if not projects:
@@ -82,7 +91,9 @@ def main() -> None:
             log.error("✗ SMTP delivery failed — check logs above.")
             sys.exit(1)
     except TokenExpiredError:
-        log.error("✗ Token expired — open OnTrack so the extension can capture a fresh token.")
+        log.error(
+            "✗ Token expired — open OnTrack so the extension can capture a fresh token."
+        )
         sys.exit(1)
     except Exception as exc:
         log.error("✗ Failed: %s", exc, exc_info=True)

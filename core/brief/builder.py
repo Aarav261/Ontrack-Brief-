@@ -6,8 +6,10 @@ from datetime import date
 
 from core.constants import GRADE_WEIGHT, URGENT, TODO, WAITING, SUBMITTED, DONE
 from core.ontrack import (
-    fetch_tasks, fetch_last_feedback,
-    fetch_tasks_direct, fetch_last_feedback_direct,
+    fetch_tasks,
+    fetch_last_feedback,
+    fetch_tasks_direct,
+    fetch_last_feedback_direct,
 )
 from core.ontrack.fetcher import _api_auth
 
@@ -32,12 +34,12 @@ def _score(task: dict, today: date) -> tuple:
       3. Days left ascending  (sooner deadline first)
       4. Urgency tier as final tiebreaker
     """
-    deadline     = _safe_date(task)
-    days_left    = (deadline - today).days if deadline is not date.max else 999
+    deadline = _safe_date(task)
+    days_left = (deadline - today).days if deadline is not date.max else 999
     grade_weight = GRADE_WEIGHT.get(task.get("target_grade_label", "P (Pass)"), 0)
-    status       = task["status"]
+    status = task["status"]
 
-    red_band = 0 if days_left <= 3 else 1   # 0 = red → floats to top
+    red_band = 0 if days_left <= 3 else 1  # 0 = red → floats to top
 
     if status == "time_exceeded":
         tier = 0
@@ -64,15 +66,21 @@ def _build_brief(
 
     for project in projects:
         project_id = project["id"]
-        unit_code  = project["unit"]["code"]
+        unit_code = project["unit"]["code"]
 
         for task in task_fetcher(project_id):
-            task["_url"] = f"{base_url}/projects/{project_id}/dashboard/{task['abbreviation']}"
+            task["_url"] = (
+                f"{base_url}/projects/{project_id}/dashboard/{task['abbreviation']}"
+            )
             status = task["status"]
 
             if status in DONE:
                 comp = task.get("completion_date")
-                if comp and (today - date.fromisoformat(comp)).days <= recently_completed_days:
+                if (
+                    comp
+                    and (today - date.fromisoformat(comp)).days
+                    <= recently_completed_days
+                ):
                     done.append((task, unit_code, None))
             elif status in URGENT:
                 feedback = feedback_fetcher(project_id, task["task_definition_id"])
@@ -92,7 +100,13 @@ def _build_brief(
     submitted.sort(key=sort_key)
     done.sort(key=lambda e: e[0].get("completion_date", ""), reverse=True)
 
-    return {"urgent": urgent, "todo": todo, "waiting": waiting, "submitted": submitted, "done": done}
+    return {
+        "urgent": urgent,
+        "todo": todo,
+        "waiting": waiting,
+        "submitted": submitted,
+        "done": done,
+    }
 
 
 def build_brief(projects: list[dict], recently_completed_days: int = 7) -> dict:
@@ -127,7 +141,9 @@ def build_brief_direct(
         student_id = user.get("id")
 
     def task_fetcher(project_id: int) -> list[dict]:
-        return fetch_tasks_direct(base_url, auth_token, username, project_id, session=session)
+        return fetch_tasks_direct(
+            base_url, auth_token, username, project_id, session=session
+        )
 
     def feedback_fetcher(project_id: int, task_def_id: int) -> str | None:
         return fetch_last_feedback_direct(

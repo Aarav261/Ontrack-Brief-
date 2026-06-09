@@ -2,12 +2,25 @@ config.ini
 .env
 .env.dev
 *.log
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.DS_Store
-Ontrack/
 .venv/
+venv/
+/Ontrack/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+
+# Node / extension
+node_modules/
+dist/
+
+# Data & secrets
 *.db
+
+# Misc
+.DS_Store
 .claude/

@@ -1,61 +1,69 @@
-import { useState } from 'react';
+import { useState } from 'react'
 
 export default function Settings({
-  initialEmail, initialHour, initialBriefWeeks, initialStripWeeks,
-  subscribedEmail, onSubscribe, onUnsubscribe, onStripWeeksChange, onBriefWeeksChange,
+  initialEmail,
+  initialHour,
+  initialBriefWeeks,
+  initialStripWeeks,
+  subscribedEmail,
+  onSubscribe,
+  onUnsubscribe,
+  onStripWeeksChange,
+  onBriefWeeksChange,
 }) {
-  const [email,       setEmail]       = useState(initialEmail);
-  const [hour,        setHour]        = useState(initialHour);
-  const [briefWeeks,  setBriefWeeks]  = useState(initialBriefWeeks);
-  const [stripWeeks,  setStripWeeks]  = useState(initialStripWeeks);
-  const [loading,     setLoading]     = useState(false);
-  const [msg,         setMsg]         = useState(null);
+  const [email, setEmail] = useState(initialEmail)
+  const [hour, setHour] = useState(initialHour)
+  const [briefWeeks, setBriefWeeks] = useState(initialBriefWeeks)
+  const [stripWeeks, setStripWeeks] = useState(initialStripWeeks)
+  const [loading, setLoading] = useState(false)
+  const [msg, setMsg] = useState(null)
 
   async function handleSubscribe() {
     if (!email || !email.includes('@')) {
-      setMsg({ type: 'error', text: 'Enter a valid email address.' });
-      return;
+      setMsg({ type: 'error', text: 'Enter a valid email address.' })
+      return
     }
-    setLoading(true);
-    setMsg(null);
+    setLoading(true)
+    setMsg(null)
     try {
-      await onSubscribe({ email, hour, briefWeeks });
-      setMsg({ type: 'success', text: 'Done! Check your inbox in a moment.' });
+      await onSubscribe({ email, hour, briefWeeks })
+      setMsg({ type: 'success', text: 'Done! Check your inbox in a moment.' })
     } catch (err) {
-      let text;
+      let text
       if (err.message === 'no-session') {
-        text = 'No OnTrack session found. Open OnTrack first.';
+        text = 'No OnTrack session found. Open OnTrack first.'
       } else if (err.status === 400) {
-        text = 'Session expired — log out and back in to OnTrack, then try again.';
+        text =
+          'Session expired — log out and back in to OnTrack, then try again.'
       } else if (err.status) {
-        text = `Server error (${err.status}).`;
+        text = `Server error (${err.status}).`
       } else {
-        text = 'Could not reach the OnTrack Brief server.';
+        text = 'Could not reach the OnTrack Brief server.'
       }
-      setMsg({ type: 'error', text });
+      setMsg({ type: 'error', text })
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
   }
 
   async function handleUnsubscribe() {
-    if (!subscribedEmail) return;
+    if (!subscribedEmail) return
     try {
-      await onUnsubscribe(subscribedEmail);
-      setMsg({ type: 'success', text: "You've been unsubscribed." });
+      await onUnsubscribe(subscribedEmail)
+      setMsg({ type: 'success', text: "You've been unsubscribed." })
     } catch {
-      setMsg({ type: 'error', text: 'Could not reach server.' });
+      setMsg({ type: 'error', text: 'Could not reach server.' })
     }
   }
 
   function handleStripWeeksChange(val) {
-    setStripWeeks(val);
-    onStripWeeksChange(parseInt(val, 10));
+    setStripWeeks(val)
+    onStripWeeksChange(parseInt(val, 10))
   }
 
   function handleBriefWeeksChange(val) {
-    setBriefWeeks(val);
-    onBriefWeeksChange(parseInt(val, 10));
+    setBriefWeeks(val)
+    onBriefWeeksChange(parseInt(val, 10))
   }
 
   return (
@@ -78,7 +86,10 @@ export default function Settings({
 
         <div className="field-group">
           <label>Brief window</label>
-          <select value={briefWeeks} onChange={(e) => handleBriefWeeksChange(e.target.value)}>
+          <select
+            value={briefWeeks}
+            onChange={(e) => handleBriefWeeksChange(e.target.value)}
+          >
             <option value="1">1 week (7 days)</option>
             <option value="2">2 weeks (14 days)</option>
           </select>
@@ -86,7 +97,10 @@ export default function Settings({
 
         <div className="field-group">
           <label>Strip view</label>
-          <select value={stripWeeks} onChange={(e) => handleStripWeeksChange(e.target.value)}>
+          <select
+            value={stripWeeks}
+            onChange={(e) => handleStripWeeksChange(e.target.value)}
+          >
             <option value="1">1 week (7 days)</option>
             <option value="2">2 weeks (14 days)</option>
           </select>
@@ -120,5 +134,5 @@ export default function Settings({
         )}
       </div>
     </div>
-  );
+  )
 }

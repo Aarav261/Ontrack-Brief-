@@ -1,0 +1,13 @@
+# Normalize line endings: store as LF in the repo and check out as LF on all
+# platforms. Keeps diffs clean and matches Prettier/Ruff output (avoids the
+# "LF will be replaced by CRLF" warnings on Windows).
+* text=auto eol=lf
+
+# Explicit binary types (never normalized)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.db binary
+*.pyc binary

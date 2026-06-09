@@ -17,5 +17,5 @@ export default function Footer({ footerUser, footerSync }) {
       <span className="footer-sync">{footerSync}</span>
       <span className="footer-ver">v1.1</span>
     </div>
-  );
+  )
 }

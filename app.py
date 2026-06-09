@@ -16,6 +16,7 @@ from routes.main import main_bp
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
+
 def create_app() -> Flask:
     app = Flask(__name__)
     app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
@@ -32,6 +33,7 @@ def create_app() -> Flask:
     startup()
 
     return app
+
 
 app = create_app()
 

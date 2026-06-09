@@ -7,17 +7,27 @@ from apscheduler.triggers.date import DateTrigger
 from flask import Blueprint, render_template, request
 
 from core.constants import URGENT, TODO, WAITING, SUBMITTED
-from core.db import (get_all_users, get_user_by_username, remove_user,
-                     upsert_user, update_user_snapshot)
+from core.db import (
+    get_all_users,
+    get_user_by_username,
+    remove_user,
+    upsert_user,
+    update_user_snapshot,
+)
 from core.jobs import run_brief, schedule_brief
-from core.ontrack import (TokenManager, TokenExpiredError,
-                          fetch_active_projects_direct, fetch_last_feedback_direct,
-                          fetch_tasks_direct)
+from core.ontrack import (
+    TokenManager,
+    TokenExpiredError,
+    fetch_active_projects_direct,
+    fetch_last_feedback_direct,
+    fetch_tasks_direct,
+)
 from extensions import limiter, scheduler
 
 log = logging.getLogger(__name__)
 
 main_bp = Blueprint("main", __name__)
+
 
 def _stale_snapshot_response(db_user):
     if db_user and db_user.get("last_snapshot"):
@@ -27,8 +37,11 @@ def _stale_snapshot_response(db_user):
             data["hint"] = "open_ontrack"
             return data, 200
         except Exception as exc:
-            log.warning("Failed to parse last_snapshot for %s: %s", db_user["username"], exc)
+            log.warning(
+                "Failed to parse last_snapshot for %s: %s", db_user["username"], exc
+            )
     return {"error": "token expired", "hint": "open_ontrack"}, 401
+
 
 @main_bp.route("/")
 def index():
@@ -36,10 +49,10 @@ def index():
 
 
 def _process_user_setup(data: dict) -> tuple[int | None, tuple[dict, int] | None]:
-    base_url   = data.get("base_url", "https://ontrack.deakin.edu.au").rstrip("/")
-    username   = data.get("username", "").strip()
+    base_url = data.get("base_url", "https://ontrack.deakin.edu.au").rstrip("/")
+    username = data.get("username", "").strip()
     auth_token = data.get("auth_token", "").strip()
-    email      = data.get("email", "").strip()
+    email = data.get("email", "").strip()
     try:
         brief_hour = max(0, min(23, int(data.get("brief_hour", 8))))
         recently_days = max(1, int(data.get("recently_completed_days", 7)))
@@ -59,9 +72,15 @@ def _process_user_setup(data: dict) -> tuple[int | None, tuple[dict, int] | None
     if not valid:
         return None, ({"ok": False, "error": "invalid token"}, 401)
 
-    user_id = upsert_user(tm.base_url, username, tm.token, email, brief_hour,
-                          recently_completed_days=recently_days,
-                          max_todo_tasks=max_todo)
+    user_id = upsert_user(
+        tm.base_url,
+        username,
+        tm.token,
+        email,
+        brief_hour,
+        recently_completed_days=recently_days,
+        max_todo_tasks=max_todo,
+    )
     schedule_brief(user_id, brief_hour)
     return user_id, None
 
@@ -81,7 +100,9 @@ def register():
         id=f"welcome_{user_id}",
         replace_existing=True,
     )
-    log.info("First brief for user_id=%s (via register) scheduled in 10 seconds", user_id)
+    log.info(
+        "First brief for user_id=%s (via register) scheduled in 10 seconds", user_id
+    )
 
     return {"ok": True}
 
@@ -114,8 +135,8 @@ def setup():
 @limiter.limit("30 per minute")
 def refresh_token():
     """Called by the browser extension on every OnTrack page load."""
-    data       = request.get_json(silent=True) or {}
-    username   = data.get("username", "").strip()
+    data = request.get_json(silent=True) or {}
+    username = data.get("username", "").strip()
     auth_token = data.get("auth_token", "").strip()
     if not username or not auth_token:
         return {"ok": False, "error": "missing fields"}, 400
@@ -125,13 +146,19 @@ def refresh_token():
         return {"ok": False, "error": "not subscribed"}, 404
 
     token_changed = user["auth_token"] != auth_token
-    was_invalid   = not user["token_valid"]
+    was_invalid = not user["token_valid"]
 
     if token_changed or was_invalid:
-        upsert_user(user["base_url"], username, auth_token,
-                    user["email"], user["brief_hour"], token_valid=1,
-                    recently_completed_days=user.get("recently_completed_days", 7),
-                    max_todo_tasks=user.get("max_todo_tasks", 10))
+        upsert_user(
+            user["base_url"],
+            username,
+            auth_token,
+            user["email"],
+            user["brief_hour"],
+            token_valid=1,
+            recently_completed_days=user.get("recently_completed_days", 7),
+            max_todo_tasks=user.get("max_todo_tasks", 10),
+        )
         if was_invalid:
             log.info("Token restored for %s — re-scheduling brief", username)
             schedule_brief(user["id"], user["brief_hour"])
@@ -144,10 +171,10 @@ def refresh_token():
 @main_bp.route("/api/snapshot", methods=["POST"])
 @limiter.limit("60 per minute")
 def api_snapshot():
-    data       = request.get_json(silent=True) or {}
-    username   = (data.get("username") or "").strip()
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
     auth_token = (data.get("auth_token") or "").strip()
-    base_url   = (data.get("base_url") or "https://ontrack.deakin.edu.au").rstrip("/")
+    base_url = (data.get("base_url") or "https://ontrack.deakin.edu.au").rstrip("/")
     days_count = min(14, max(1, int(data.get("days", 7))))
 
     if not username or not auth_token:
@@ -156,10 +183,14 @@ def api_snapshot():
     db_user = get_user_by_username(username)
     if db_user:
         auth_token = db_user["auth_token"]
-        base_url   = db_user["base_url"] or base_url
+        base_url = db_user["base_url"] or base_url
         log.info("api_snapshot: using DB token ...%s for %s", auth_token[-6:], username)
     else:
-        log.warning("api_snapshot: %s not found in DB — using extension token ...%s", username, auth_token[-6:])
+        log.warning(
+            "api_snapshot: %s not found in DB — using extension token ...%s",
+            username,
+            auth_token[-6:],
+        )
 
     # Dedicated TokenManager so token capture doesn't interfere with brief jobs.
     tm = TokenManager(base_url, username, auth_token)
@@ -171,18 +202,23 @@ def api_snapshot():
         return {"error": "OnTrack unreachable"}, 503
 
     if not valid:
-        log.warning("api_snapshot: token rejected by OnTrack for %s — open OnTrack to refresh", username)
+        log.warning(
+            "api_snapshot: token rejected by OnTrack for %s — open OnTrack to refresh",
+            username,
+        )
         return _stale_snapshot_response(db_user)
 
     try:
-        projects, tm.token = fetch_active_projects_direct(tm.base_url, tm.token, tm.username, session=tm.session)
+        projects, tm.token = fetch_active_projects_direct(
+            tm.base_url, tm.token, tm.username, session=tm.session
+        )
     except TokenExpiredError:
         return _stale_snapshot_response(db_user)
     except Exception as exc:
         log.warning("api_snapshot: fetch_projects failed for %s: %s", username, exc)
         return {"error": "could not fetch projects"}, 502
 
-    today  = date.today()
+    today = date.today()
     ACTIVE = URGENT | TODO | WAITING
     FEEDBACK_STATUSES = URGENT | TODO | WAITING | SUBMITTED
     feedback_entries = []
@@ -195,20 +231,26 @@ def api_snapshot():
     date_index = {}
     days = []
     for offset in range(days_count):
-        d   = today + timedelta(days=offset)
+        d = today + timedelta(days=offset)
         iso = d.isoformat()
         date_index[iso] = offset
-        days.append({"offset": offset, "date": iso, "label": d.strftime("%a"), "tasks": []})
+        days.append(
+            {"offset": offset, "date": iso, "label": d.strftime("%a"), "tasks": []}
+        )
 
     for project in projects:
         if len(feedback_entries) >= 3 or feedback_checks >= 8:
             break
         project_id = project["id"]
-        unit_code  = project["unit"]["code"]
+        unit_code = project["unit"]["code"]
         try:
-            tasks = fetch_tasks_direct(tm.base_url, tm.token, tm.username, project_id, session=tm.session)
+            tasks = fetch_tasks_direct(
+                tm.base_url, tm.token, tm.username, project_id, session=tm.session
+            )
         except Exception as exc:
-            log.warning("api_snapshot: fetch_tasks failed project %s: %s", project_id, exc)
+            log.warning(
+                "api_snapshot: fetch_tasks failed project %s: %s", project_id, exc
+            )
             continue
         for task in tasks:
             if task.get("status") not in ACTIVE:
@@ -217,14 +259,16 @@ def api_snapshot():
             if due not in date_index:
                 continue
             abbrev = task.get("abbreviation", "")
-            days[date_index[due]]["tasks"].append({
-                "name":         task.get("name", abbrev),
-                "abbreviation": abbrev,
-                "unit":         unit_code,
-                "grade":        task.get("target_grade_label", "P (Pass)"),
-                "due_date":     due,
-                "url":          f"{base_url}/projects/{project_id}/dashboard/{abbrev}",
-            })
+            days[date_index[due]]["tasks"].append(
+                {
+                    "name": task.get("name", abbrev),
+                    "abbreviation": abbrev,
+                    "unit": unit_code,
+                    "grade": task.get("target_grade_label", "P (Pass)"),
+                    "due_date": due,
+                    "url": f"{base_url}/projects/{project_id}/dashboard/{abbrev}",
+                }
+            )
         if len(feedback_entries) >= 3:
             continue
         for task in tasks:
@@ -250,22 +294,27 @@ def api_snapshot():
             if len(trimmed) > 220:
                 trimmed = trimmed[:217].rstrip() + "..."
             abbrev = task.get("abbreviation", "")
-            feedback_entries.append({
-                "unit": unit_code,
-                "task": task.get("name", abbrev) or abbrev,
-                "text": trimmed,
-                "url": f"{base_url}/projects/{project_id}/dashboard/{abbrev}",
-            })
+            feedback_entries.append(
+                {
+                    "unit": unit_code,
+                    "task": task.get("name", abbrev) or abbrev,
+                    "text": trimmed,
+                    "url": f"{base_url}/projects/{project_id}/dashboard/{abbrev}",
+                }
+            )
 
     response_data = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "days": days,
         "feedback": feedback_entries,
-        "auth_token": tm.token
+        "auth_token": tm.token,
     }
 
     if db_user:
-        update_user_snapshot(username, json.dumps(response_data))
+        # Don't persist the rotating token inside the snapshot — it's a credential
+        # at rest, and a stale snapshot must never hand back an outdated token.
+        stored = {k: v for k, v in response_data.items() if k != "auth_token"}
+        update_user_snapshot(username, json.dumps(stored))
 
     return response_data
 

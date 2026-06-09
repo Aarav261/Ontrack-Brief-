@@ -8,10 +8,22 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
+from core.crypto import decrypt as _decrypt, encrypt as _encrypt
+
 log = logging.getLogger(__name__)
 
+
+def _decrypt_row(row: dict | None) -> dict | None:
+    """Decrypt the at-rest auth_token on a user row read from the DB."""
+    if row and row.get("auth_token") is not None:
+        row["auth_token"] = _decrypt(row["auth_token"])
+    return row
+
+
 _DATABASE_URL = os.environ.get("DATABASE_URL", "")
-_DB_PATH = Path(os.environ.get("DB_PATH", str(Path(__file__).parent.parent / "ontracker.db")))
+_DB_PATH = Path(
+    os.environ.get("DB_PATH", str(Path(__file__).parent.parent / "ontracker.db"))
+)
 _USE_PG = _DATABASE_URL.startswith(("postgresql://", "postgres://"))
 
 if _USE_PG:
@@ -111,13 +123,22 @@ def init_db() -> None:
                     cur.execute(f"ALTER TABLE users ADD COLUMN {col} {typedef}")
 
 
-def upsert_user(base_url: str, username: str, auth_token: str, email: str,
-                brief_hour: int = 8, token_valid: int = 1,
-                recently_completed_days: int = 7, max_todo_tasks: int = 10) -> int:
+def upsert_user(
+    base_url: str,
+    username: str,
+    auth_token: str,
+    email: str,
+    brief_hour: int = 8,
+    token_valid: int = 1,
+    recently_completed_days: int = 7,
+    max_todo_tasks: int = 10,
+) -> int:
+    auth_token = _encrypt(auth_token)  # encrypt the bearer credential at rest
     with _connection() as conn:
         cur = conn.cursor()
         if _USE_PG:
-            cur.execute(f"""
+            cur.execute(
+                f"""
                 INSERT INTO users (base_url, username, auth_token, email, brief_hour, token_valid,
                                    recently_completed_days, max_todo_tasks)
                 VALUES ({_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P})
@@ -130,11 +151,22 @@ def upsert_user(base_url: str, username: str, auth_token: str, email: str,
                     recently_completed_days = EXCLUDED.recently_completed_days,
                     max_todo_tasks          = EXCLUDED.max_todo_tasks
                 RETURNING id
-            """, (base_url, username, auth_token, email, brief_hour, token_valid,
-                  recently_completed_days, max_todo_tasks))
+            """,
+                (
+                    base_url,
+                    username,
+                    auth_token,
+                    email,
+                    brief_hour,
+                    token_valid,
+                    recently_completed_days,
+                    max_todo_tasks,
+                ),
+            )
             return cur.fetchone()[0]
         else:
-            cur.execute(f"""
+            cur.execute(
+                f"""
                 INSERT INTO users (base_url, username, auth_token, email, brief_hour, token_valid,
                                    recently_completed_days, max_todo_tasks)
                 VALUES ({_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P})
@@ -146,16 +178,30 @@ def upsert_user(base_url: str, username: str, auth_token: str, email: str,
                     token_valid             = excluded.token_valid,
                     recently_completed_days = excluded.recently_completed_days,
                     max_todo_tasks          = excluded.max_todo_tasks
-            """, (base_url, username, auth_token, email, brief_hour, token_valid,
-                  recently_completed_days, max_todo_tasks))
-            return cur.execute(f"SELECT id FROM users WHERE email = {_P}", (email,)).fetchone()[0]
+            """,
+                (
+                    base_url,
+                    username,
+                    auth_token,
+                    email,
+                    brief_hour,
+                    token_valid,
+                    recently_completed_days,
+                    max_todo_tasks,
+                ),
+            )
+            return cur.execute(
+                f"SELECT id FROM users WHERE email = {_P}", (email,)
+            ).fetchone()[0]
 
 
 def update_user_snapshot(username: str, snapshot_json: str) -> None:
     with _connection() as conn:
         cur = conn.cursor()
-        cur.execute(f"UPDATE users SET last_snapshot = {_P} WHERE username = {_P}",
-                    (snapshot_json, username))
+        cur.execute(
+            f"UPDATE users SET last_snapshot = {_P} WHERE username = {_P}",
+            (snapshot_json, username),
+        )
 
 
 def mark_token_invalid(email: str) -> None:
@@ -169,11 +215,11 @@ def get_all_users() -> list[dict]:
         if _USE_PG:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             cur.execute("SELECT * FROM users")
-            return [dict(r) for r in cur.fetchall()]
+            return [_decrypt_row(dict(r)) for r in cur.fetchall()]
         else:
             cur = conn.cursor()
             cur.execute("SELECT * FROM users")
-            return [dict(r) for r in cur.fetchall()]
+            return [_decrypt_row(dict(r)) for r in cur.fetchall()]
 
 
 def get_user_by_id(user_id: int) -> dict | None:
@@ -184,7 +230,7 @@ def get_user_by_id(user_id: int) -> dict | None:
             cur = conn.cursor()
         cur.execute(f"SELECT * FROM users WHERE id = {_P}", (user_id,))
         row = cur.fetchone()
-        return dict(row) if row else None
+        return _decrypt_row(dict(row)) if row else None
 
 
 def get_user_by_username(username: str) -> dict | None:
@@ -195,7 +241,7 @@ def get_user_by_username(username: str) -> dict | None:
             cur = conn.cursor()
         cur.execute(f"SELECT * FROM users WHERE username = {_P}", (username,))
         row = cur.fetchone()
-        return dict(row) if row else None
+        return _decrypt_row(dict(row)) if row else None
 
 
 def remove_user(email: str) -> None:

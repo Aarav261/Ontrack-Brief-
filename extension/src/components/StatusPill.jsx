@@ -4,5 +4,5 @@ export default function StatusPill({ type, text }) {
       <span className={`dot ${type}`} />
       <span>{text}</span>
     </div>
-  );
+  )
 }

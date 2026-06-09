@@ -32,9 +32,15 @@ def main() -> None:
             "  brief.py --schedule --hour 7  install 7am weekday cron job\n"
         ),
     )
-    parser.add_argument("--preview",  action="store_true", help="Open in browser instead of emailing")
-    parser.add_argument("--schedule", action="store_true", help="Install cron job and exit")
-    parser.add_argument("--hour",     type=int, default=8, help="Hour for cron schedule (default: 8)")
+    parser.add_argument(
+        "--preview", action="store_true", help="Open in browser instead of emailing"
+    )
+    parser.add_argument(
+        "--schedule", action="store_true", help="Install cron job and exit"
+    )
+    parser.add_argument(
+        "--hour", type=int, default=8, help="Hour for cron schedule (default: 8)"
+    )
     args = parser.parse_args()
 
     if args.schedule:

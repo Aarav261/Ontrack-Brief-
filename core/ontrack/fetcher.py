@@ -29,20 +29,31 @@ log = logging.getLogger(__name__)
 # Per-user token capture is owned by core.auth.TokenManager.
 _http = new_session()
 
-_GRADE_LABELS = {0: "P (Pass)", 1: "C (Credit)", 2: "D (Distinction)", 3: "HD (High Distinction)"}
+_GRADE_LABELS = {
+    0: "P (Pass)",
+    1: "C (Credit)",
+    2: "D (Distinction)",
+    3: "HD (High Distinction)",
+}
 
 
 def _enrich_tasks(tasks: list[dict], task_defs: list[dict]) -> None:
     td_by_id = {td["id"]: td for td in task_defs}
     for t in tasks:
         td = td_by_id.get(t["task_definition_id"], {})
-        t["abbreviation"]       = t.get("abbreviation") or td.get("abbreviation", "")
-        t["name"]               = t.get("name") or td.get("name", "")
-        t["target_grade"]       = t.get("target_grade") if t.get("target_grade") is not None else td.get("target_grade")
+        t["abbreviation"] = t.get("abbreviation") or td.get("abbreviation", "")
+        t["name"] = t.get("name") or td.get("name", "")
+        t["target_grade"] = (
+            t.get("target_grade")
+            if t.get("target_grade") is not None
+            else td.get("target_grade")
+        )
         t["target_grade_label"] = _GRADE_LABELS.get(t.get("target_grade"), "P (Pass)")
-        t["due_date"]           = t.get("due_date") or td.get("target_date") or td.get("due_date")
-        t["deadline"]           = t.get("deadline") or td.get("due_date")
-        t["status_label"]       = t.get("status_label") or t.get("status", "").replace("_", " ").title()
+        t["due_date"] = t.get("due_date") or td.get("target_date") or td.get("due_date")
+        t["deadline"] = t.get("deadline") or td.get("due_date")
+        t["status_label"] = (
+            t.get("status_label") or t.get("status", "").replace("_", " ").title()
+        )
 
 
 def _append_missing_tasks(tasks: list[dict], task_defs: list[dict]) -> None:
@@ -53,23 +64,27 @@ def _append_missing_tasks(tasks: list[dict], task_defs: list[dict]) -> None:
             continue
         if td.get("start_date", "0000") > today:
             continue
-        tasks.append({
-            "id":                 None,
-            "task_definition_id": td["id"],
-            "abbreviation":       td["abbreviation"],
-            "name":               td["name"],
-            "status":             "not_started",
-            "status_label":       "Not Started",
-            "target_grade":       td.get("target_grade"),
-            "target_grade_label": _GRADE_LABELS.get(td.get("target_grade"), "P (Pass)"),
-            "due_date":           td.get("target_date") or td.get("due_date"),
-            "deadline":           td.get("due_date"),
-            "submission_date":    None,
-            "completion_date":    None,
-            "extensions":         0,
-            "grade":              None,
-            "is_overdue":         False,
-        })
+        tasks.append(
+            {
+                "id": None,
+                "task_definition_id": td["id"],
+                "abbreviation": td["abbreviation"],
+                "name": td["name"],
+                "status": "not_started",
+                "status_label": "Not Started",
+                "target_grade": td.get("target_grade"),
+                "target_grade_label": _GRADE_LABELS.get(
+                    td.get("target_grade"), "P (Pass)"
+                ),
+                "due_date": td.get("target_date") or td.get("due_date"),
+                "deadline": td.get("due_date"),
+                "submission_date": None,
+                "completion_date": None,
+                "extensions": 0,
+                "grade": None,
+                "is_overdue": False,
+            }
+        )
 
 
 def _extract_latest_feedback(comments: list, student_id: int | None) -> str | None:
@@ -108,8 +123,11 @@ def _fetch_feedback(
 # Direct API helpers (used by the web app — no ontrack CLI dependency)
 # ---------------------------------------------------------------------------
 
+
 def validate_token(
-    base_url: str, auth_token: str, username: str,
+    base_url: str,
+    auth_token: str,
+    username: str,
     session: requests.Session | None = None,
 ) -> tuple[bool, str]:
     """Backward-compatible shim: validate and return (is_valid, current_token).
@@ -122,7 +140,9 @@ def validate_token(
 
 
 def fetch_active_projects_direct(
-    base_url: str, auth_token: str, username: str,
+    base_url: str,
+    auth_token: str,
+    username: str,
     session: requests.Session | None = None,
 ) -> tuple[list[dict], str]:
     """Return (projects, current_token) — token may be refreshed by the server."""
@@ -137,12 +157,17 @@ def fetch_active_projects_direct(
     r.raise_for_status()
     refreshed = _extract_token(r, auth_token)
     today = date.today()
-    projects = [p for p in r.json() if date.fromisoformat(p["unit"]["end_date"]) >= today]
+    projects = [
+        p for p in r.json() if date.fromisoformat(p["unit"]["end_date"]) >= today
+    ]
     return projects, refreshed
 
 
 def fetch_tasks_direct(
-    base_url: str, auth_token: str, username: str, project_id: int,
+    base_url: str,
+    auth_token: str,
+    username: str,
+    project_id: int,
     session: requests.Session | None = None,
 ) -> list[dict]:
     http = session or _http
@@ -152,7 +177,7 @@ def fetch_tasks_direct(
         timeout=15,
     )
     r.raise_for_status()
-    data  = r.json()
+    data = r.json()
     tasks = data.get("tasks", [])
 
     unit_id = data.get("unit_id") or (data.get("unit") or {}).get("id")
@@ -167,9 +192,14 @@ def fetch_tasks_direct(
             unit_r.raise_for_status()
             task_defs = unit_r.json().get("task_definitions", [])
         except requests.RequestException as exc:
-            log.warning("Could not fetch unit %s for task_definitions: %s", unit_id, exc)
+            log.warning(
+                "Could not fetch unit %s for task_definitions: %s", unit_id, exc
+            )
     else:
-        log.warning("No unit_id found in project %s response — task names will be blank", project_id)
+        log.warning(
+            "No unit_id found in project %s response — task names will be blank",
+            project_id,
+        )
 
     _enrich_tasks(tasks, task_defs)
     _append_missing_tasks(tasks, task_defs)
@@ -222,19 +252,24 @@ def load_api_auth() -> tuple[str, dict, int | None]:
     except ImportError:
         candidates = [
             *pathlib.Path(__file__).parent.glob(".venv/lib/python*/site-packages"),
-            *pathlib.Path.home().glob(".local/share/uv/tools/ontrack-cli/lib/python*/site-packages"),
+            *pathlib.Path.home().glob(
+                ".local/share/uv/tools/ontrack-cli/lib/python*/site-packages"
+            ),
         ]
         if not candidates:
-            print("Could not locate ontrack-cli. Activate the project venv or install via uv.", file=sys.stderr)
+            print(
+                "Could not locate ontrack-cli. Activate the project venv or install via uv.",
+                file=sys.stderr,
+            )
             sys.exit(1)
         sys.path.insert(0, str(candidates[0]))
         from ontrack_cli.config import load_auth_config  # type: ignore
 
     auth = load_auth_config()
     headers = {
-        "Username":   auth.username,
+        "Username": auth.username,
         "Auth-Token": auth.auth_token,
-        "Accept":     "application/json",
+        "Accept": "application/json",
     }
     student_id = auth.cached_user.id if auth.cached_user else None
     return auth.base_url, headers, student_id
@@ -256,8 +291,12 @@ def fetch_task_sheet(unit_id: int, task_def_id: int) -> bytes | None:
     url = f"{base_url}/api/units/{unit_id}/task_definitions/{task_def_id}/task_pdf.json"
 
     try:
-        r = _http.get(url, headers={**headers, "Accept": "*/*"},
-                      params={"as_attachment": "true"}, timeout=15)
+        r = _http.get(
+            url,
+            headers={**headers, "Accept": "*/*"},
+            params={"as_attachment": "true"},
+            timeout=15,
+        )
         r.raise_for_status()
     except requests.RequestException:
         return None
@@ -273,8 +312,12 @@ def fetch_submission(project_id: int, task_def_id: int) -> tuple[bytes, str] | N
     url = f"{base_url}/api/projects/{project_id}/task_def_id/{task_def_id}/submission"
 
     try:
-        r = _http.get(url, headers={**headers, "Accept": "*/*"},
-                      params={"as_attachment": "true"}, timeout=15)
+        r = _http.get(
+            url,
+            headers={**headers, "Accept": "*/*"},
+            params={"as_attachment": "true"},
+            timeout=15,
+        )
         r.raise_for_status()
     except requests.RequestException:
         return None
@@ -283,7 +326,11 @@ def fetch_submission(project_id: int, task_def_id: int) -> tuple[bytes, str] | N
         return None
 
     disposition = r.headers.get("Content-Disposition", "")
-    filename = disposition.split("filename=")[-1].strip() if "filename=" in disposition else f"{task_def_id}.pdf"
+    filename = (
+        disposition.split("filename=")[-1].strip()
+        if "filename=" in disposition
+        else f"{task_def_id}.pdf"
+    )
     return r.content, filename
 
 

@@ -62,7 +62,7 @@
           || response.headers.get("auth-token")
           || response.headers.get("x-auth-token");
         if (respToken && username) emit(respToken, username);
-      } catch (_) {}
+      } catch { /* response without readable headers — ignore */ }
       return response;
     });
   };

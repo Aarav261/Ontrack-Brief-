@@ -1,26 +1,26 @@
-import { useState } from 'react';
+import { useState } from 'react'
 
 export default function SignupFlow({ onSignup, onSkip }) {
-  const [email, setEmail]   = useState('');
-  const [loading, setLoading] = useState(false);
-  const [msg, setMsg]       = useState(null); // { type, text }
+  const [email, setEmail] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [msg, setMsg] = useState(null) // { type, text }
 
   async function handleSignup() {
     if (!email || !email.includes('@')) {
-      setMsg({ type: 'error', text: 'Enter a valid email address.' });
-      return;
+      setMsg({ type: 'error', text: 'Enter a valid email address.' })
+      return
     }
-    setLoading(true);
-    setMsg(null);
+    setLoading(true)
+    setMsg(null)
     try {
-      const res = await onSignup(email);
+      const res = await onSignup(email)
       if (!res.ok) {
-        setMsg({ type: 'error', text: res.error || 'Signup failed.' });
+        setMsg({ type: 'error', text: res.error || 'Signup failed.' })
       }
     } catch {
-      setMsg({ type: 'error', text: 'Could not reach server.' });
+      setMsg({ type: 'error', text: 'Could not reach server.' })
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
   }
 
@@ -29,7 +29,9 @@ export default function SignupFlow({ onSignup, onSkip }) {
       <div className="info-icon">✉️</div>
       <div className="info-title">Step 2: Enter your email</div>
       <div className="info-sub" style={{ marginBottom: 20 }}>
-        Get your daily task summary by email.<br />No more missing deadlines!
+        Get your daily task summary by email.
+        <br />
+        No more missing deadlines!
       </div>
 
       <div className="field-group" style={{ textAlign: 'left' }}>
@@ -62,5 +64,5 @@ export default function SignupFlow({ onSignup, onSkip }) {
         </span>
       </div>
     </div>
-  );
+  )
 }

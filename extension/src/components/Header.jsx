@@ -10,9 +10,17 @@ export default function Header({ onSettings, onRefresh, settingsActive }) {
           className={`icon-btn${settingsActive ? ' active' : ''}`}
           onClick={onSettings}
           title="Settings"
-        >⚙</button>
-        <button className="icon-btn" onClick={onRefresh} title="Reload snapshot">↻</button>
+        >
+          ⚙
+        </button>
+        <button
+          className="icon-btn"
+          onClick={onRefresh}
+          title="Reload snapshot"
+        >
+          ↻
+        </button>
       </div>
     </div>
-  );
+  )
 }
