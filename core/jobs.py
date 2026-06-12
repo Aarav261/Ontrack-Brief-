@@ -67,6 +67,11 @@ def run_brief(user_id: int) -> None:
 def refresh_all_tokens() -> None:
     """Single consolidated job — reads fresh from DB every 20 min for all users."""
     for user in get_all_users():
+        # Already invalid: briefs are paused and the one-time re-auth email was
+        # already sent. Skip until the extension pushes a fresh token (which
+        # restores token_valid=1), so we don't re-email every cycle.
+        if not user.get("token_valid", 1):
+            continue
         tm = TokenManager.for_user(user)
         try:
             valid = tm.validate()
