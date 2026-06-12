@@ -70,6 +70,7 @@ def init_db() -> None:
                     username                TEXT NOT NULL,
                     auth_token              TEXT NOT NULL,
                     email                   TEXT NOT NULL UNIQUE,
+                    clerk_user_id           TEXT,
                     brief_hour              INTEGER NOT NULL DEFAULT 8,
                     token_valid             INTEGER NOT NULL DEFAULT 1,
                     recently_completed_days INTEGER NOT NULL DEFAULT 7,
@@ -84,17 +85,24 @@ def init_db() -> None:
                 ("recently_completed_days", "INTEGER NOT NULL DEFAULT 7"),
                 ("max_todo_tasks", "INTEGER NOT NULL DEFAULT 10"),
                 ("last_snapshot", "TEXT"),
+                ("clerk_user_id", "TEXT"),
             ]:
                 cur.execute(f"""
                     DO $$
                     BEGIN
-                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                                        WHERE table_name='users' AND column_name='{col}') THEN
                             ALTER TABLE users ADD COLUMN {col} {typedef};
                         END IF;
                     END
                     $$;
                 """)
+            # Clerk identity is unique but nullable (NULLs are distinct) — index, not
+            # an ADD COLUMN UNIQUE, so it works as a migration on both engines.
+            cur.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_clerk_user_id "
+                "ON users(clerk_user_id)"
+            )
         else:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
@@ -103,6 +111,7 @@ def init_db() -> None:
                     username                TEXT NOT NULL,
                     auth_token              TEXT NOT NULL,
                     email                   TEXT NOT NULL UNIQUE,
+                    clerk_user_id           TEXT,
                     brief_hour              INTEGER NOT NULL DEFAULT 8,
                     token_valid             INTEGER NOT NULL DEFAULT 1,
                     recently_completed_days INTEGER NOT NULL DEFAULT 7,
@@ -118,9 +127,16 @@ def init_db() -> None:
                 ("recently_completed_days", "INTEGER NOT NULL DEFAULT 7"),
                 ("max_todo_tasks", "INTEGER NOT NULL DEFAULT 10"),
                 ("last_snapshot", "TEXT"),
+                ("clerk_user_id", "TEXT"),
             ]:
                 if col not in cols:
                     cur.execute(f"ALTER TABLE users ADD COLUMN {col} {typedef}")
+            # Clerk identity is unique but nullable (NULLs are distinct) — index, not
+            # an ADD COLUMN UNIQUE (SQLite forbids that as a migration).
+            cur.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_clerk_user_id "
+                "ON users(clerk_user_id)"
+            )
 
 
 def upsert_user(
@@ -132,6 +148,7 @@ def upsert_user(
     token_valid: int = 1,
     recently_completed_days: int = 7,
     max_todo_tasks: int = 10,
+    clerk_user_id: str | None = None,
 ) -> int:
     auth_token = _encrypt(auth_token)  # encrypt the bearer credential at rest
     with _connection() as conn:
@@ -140,8 +157,8 @@ def upsert_user(
             cur.execute(
                 f"""
                 INSERT INTO users (base_url, username, auth_token, email, brief_hour, token_valid,
-                                   recently_completed_days, max_todo_tasks)
-                VALUES ({_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P})
+                                   recently_completed_days, max_todo_tasks, clerk_user_id)
+                VALUES ({_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P})
                 ON CONFLICT(email) DO UPDATE SET
                     base_url                = EXCLUDED.base_url,
                     username                = EXCLUDED.username,
@@ -149,7 +166,8 @@ def upsert_user(
                     brief_hour              = EXCLUDED.brief_hour,
                     token_valid             = EXCLUDED.token_valid,
                     recently_completed_days = EXCLUDED.recently_completed_days,
-                    max_todo_tasks          = EXCLUDED.max_todo_tasks
+                    max_todo_tasks          = EXCLUDED.max_todo_tasks,
+                    clerk_user_id           = COALESCE(EXCLUDED.clerk_user_id, users.clerk_user_id)
                 RETURNING id
             """,
                 (
@@ -161,6 +179,7 @@ def upsert_user(
                     token_valid,
                     recently_completed_days,
                     max_todo_tasks,
+                    clerk_user_id,
                 ),
             )
             return cur.fetchone()[0]
@@ -168,8 +187,8 @@ def upsert_user(
             cur.execute(
                 f"""
                 INSERT INTO users (base_url, username, auth_token, email, brief_hour, token_valid,
-                                   recently_completed_days, max_todo_tasks)
-                VALUES ({_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P})
+                                   recently_completed_days, max_todo_tasks, clerk_user_id)
+                VALUES ({_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P})
                 ON CONFLICT(email) DO UPDATE SET
                     base_url                = excluded.base_url,
                     username                = excluded.username,
@@ -177,7 +196,8 @@ def upsert_user(
                     brief_hour              = excluded.brief_hour,
                     token_valid             = excluded.token_valid,
                     recently_completed_days = excluded.recently_completed_days,
-                    max_todo_tasks          = excluded.max_todo_tasks
+                    max_todo_tasks          = excluded.max_todo_tasks,
+                    clerk_user_id           = COALESCE(excluded.clerk_user_id, users.clerk_user_id)
             """,
                 (
                     base_url,
@@ -188,6 +208,7 @@ def upsert_user(
                     token_valid,
                     recently_completed_days,
                     max_todo_tasks,
+                    clerk_user_id,
                 ),
             )
             return cur.execute(
@@ -242,6 +263,33 @@ def get_user_by_username(username: str) -> dict | None:
         cur.execute(f"SELECT * FROM users WHERE username = {_P}", (username,))
         row = cur.fetchone()
         return _decrypt_row(dict(row)) if row else None
+
+
+def get_user_by_clerk_id(clerk_user_id: str) -> dict | None:
+    with _connection() as conn:
+        if _USE_PG:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        else:
+            cur = conn.cursor()
+        cur.execute(f"SELECT * FROM users WHERE clerk_user_id = {_P}", (clerk_user_id,))
+        row = cur.fetchone()
+        return _decrypt_row(dict(row)) if row else None
+
+
+def link_clerk_id_by_email(clerk_user_id: str, email: str) -> dict | None:
+    """Claim a legacy row for this Clerk user by verified email (migration §8).
+
+    Only attaches to a row whose clerk_user_id is still NULL, so an already-claimed
+    row is never hijacked. Returns the linked row, or None if nothing was claimed.
+    """
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"""UPDATE users SET clerk_user_id = {_P}
+                WHERE email = {_P} AND clerk_user_id IS NULL""",
+            (clerk_user_id, email),
+        )
+    return get_user_by_clerk_id(clerk_user_id)
 
 
 def remove_user(email: str) -> None:
