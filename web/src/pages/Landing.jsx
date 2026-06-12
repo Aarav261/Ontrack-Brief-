@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { SignedIn, SignedOut, UserButton, useAuth } from '@clerk/clerk-react'
 
-// Backend base for the Phase 0 spike. Swap to the deployed URL later.
-const API_BASE = 'http://localhost:8000'
+// Backend base — VITE_API_BASE in prod (Railway), localhost for dev.
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
 export default function Landing() {
   const { getToken } = useAuth()

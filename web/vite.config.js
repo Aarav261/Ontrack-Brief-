@@ -20,5 +20,6 @@ export default defineConfig({
     'import.meta.env.VITE_CLERK_FRONTEND_URL': JSON.stringify(
       pick('VITE_CLERK_FRONTEND_URL')
     ),
+    'import.meta.env.VITE_API_BASE': JSON.stringify(pick('VITE_API_BASE')),
   },
 })
