@@ -222,6 +222,11 @@ def link_ontrack():
     if not valid:
         return {"ok": False, "error": "invalid token"}, 401
 
+    # First link = no row yet for this Clerk identity. The popup re-links on
+    # every open, so only the first one schedules an immediate welcome brief —
+    # otherwise the user gets an email every time they open the extension.
+    is_first_link = get_user_by_clerk_id(clerk_id) is None
+
     user_id = upsert_user(
         tm.base_url,
         username,
@@ -233,13 +238,15 @@ def link_ontrack():
         clerk_user_id=clerk_id,
     )
     schedule_brief(user_id, brief_hour)
-    scheduler.add_job(
-        run_brief,
-        DateTrigger(run_date=datetime.now() + timedelta(seconds=10)),
-        args=[user_id],
-        id=f"welcome_{user_id}",
-        replace_existing=True,
-    )
+    if is_first_link:
+        scheduler.add_job(
+            run_brief,
+            DateTrigger(run_date=datetime.now() + timedelta(seconds=10)),
+            args=[user_id],
+            id=f"welcome_{user_id}",
+            replace_existing=True,
+        )
+        log.info("First link for clerk_user_id=%s — welcome brief scheduled", clerk_id)
     log.info("OnTrack linked for clerk_user_id=%s (user_id=%s)", clerk_id, user_id)
     return {"ok": True}
 
