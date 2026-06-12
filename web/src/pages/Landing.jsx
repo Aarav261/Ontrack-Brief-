@@ -49,7 +49,12 @@ export default function Landing() {
           to your inbox. Even with your laptop closed.
         </p>
         <div className="hero-cta">
-          <a className="btn btn-primary" href="#install">
+          <a
+            className="btn btn-primary"
+            href="https://github.com/Aarav261/Ontracker/releases/latest"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             Add to Chrome
           </a>
           <SignedOut>
