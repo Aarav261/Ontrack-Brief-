@@ -4,8 +4,9 @@ from datetime import date, datetime, timedelta
 
 import requests
 from apscheduler.triggers.date import DateTrigger
-from flask import Blueprint, render_template, request
+from flask import Blueprint, g, jsonify, render_template, request
 
+from core.clerk_auth import require_clerk_auth
 from core.constants import URGENT, TODO, WAITING, SUBMITTED
 from core.db import (
     get_all_users,
@@ -27,6 +28,13 @@ from extensions import limiter, scheduler
 log = logging.getLogger(__name__)
 
 main_bp = Blueprint("main", __name__)
+
+
+@main_bp.route("/api/whoami")
+@require_clerk_auth
+def whoami():
+    """Phase 0 spike: proves a Clerk session JWT verifies on the backend."""
+    return jsonify({"clerk_user_id": g.clerk_user_id})
 
 
 def _stale_snapshot_response(db_user):
