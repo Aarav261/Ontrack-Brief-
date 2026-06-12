@@ -405,3 +405,22 @@ def unsubscribe(email: str):
             break
     remove_user(email)
     return render_template("unsubscribed.html", email=email)
+
+
+@main_bp.route("/unsubscribe", methods=["POST"])
+@limiter.limit("10 per minute")
+@require_clerk_auth
+def unsubscribe_clerk():
+    """Unsubscribe the caller, keyed off their verified Clerk identity.
+
+    Keying on clerk_user_id (not an email in the URL) prevents anyone from
+    unsubscribing another user by guessing their address.
+    """
+    user = get_user_by_clerk_id(g.clerk_user_id)
+    if not user:
+        return {"ok": True}  # nothing linked — idempotent no-op
+    job_id = f"brief_{user['id']}"
+    if scheduler.get_job(job_id):
+        scheduler.remove_job(job_id)
+    remove_user(user["email"])
+    return {"ok": True}
