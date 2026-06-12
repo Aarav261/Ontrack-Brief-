@@ -36,7 +36,12 @@ main_bp = Blueprint("main", __name__)
 @require_clerk_auth
 def whoami():
     """Phase 0 spike: proves a Clerk session JWT verifies on the backend."""
-    return jsonify({"clerk_user_id": g.clerk_user_id})
+    return jsonify(
+        {
+            "clerk_user_id": g.clerk_user_id,
+            "email": (g.clerk_claims or {}).get("email"),
+        }
+    )
 
 
 def _stale_snapshot_response(db_user):
