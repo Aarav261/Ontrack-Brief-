@@ -26,7 +26,7 @@ strip and keeps the user's auth token fresh.
          │                              │
          │                              ▼
          │                    ┌──────────────────────┐
-         │                    │   SendGrid (email)    │
+         │                    │    Resend (email)     │
          │                    └──────────────────────┘
          ▼
    chrome.storage.local
@@ -39,7 +39,7 @@ strip and keeps the user's auth token fresh.
 | **Extension** | React + Vite, MV3 | `extension/` | Token capture, live task strip, subscription UI |
 | **Web server** | Flask + APScheduler | `app.py`, `routes/`, `core/` | User store, scheduled briefs, snapshot API |
 | **Database** | PostgreSQL (prod) / SQLite (dev) | `core/db.py` | One `users` table |
-| **Email** | SendGrid | `core/mailer.py` | Brief + re-auth delivery |
+| **Email** | Resend | `core/mailer.py` | Brief + re-auth delivery |
 | **Source** | OnTrack/Doubtfire REST API | external | Projects, tasks, comments |
 
 ---
@@ -268,7 +268,7 @@ also schedules an immediate `welcome_{id}` brief.
 4. build_brief_direct(…session=tm.session)  — fetch tasks + feedback per project
    └─ tm.persist(user)                      — save the freshest token again
 5. render_html()                            — build the email (core/brief/renderer.py)
-6. send_brief_to()                          — SendGrid (core/mailer.py)
+6. send_brief_to()                          — Resend (core/mailer.py)
 ```
 
 ### 5.3 Live snapshot for the extension — `POST /api/snapshot`
@@ -326,7 +326,7 @@ routes/
 core/
   db.py                     users table, PG/SQLite, upsert/get/remove
   jobs.py                   run_brief, refresh_all_tokens, schedule_brief, startup
-  mailer.py                 SendGrid send (brief + re-auth)
+  mailer.py                 Resend send (brief + re-auth)
   constants.py              status sets, grade/colour lookup tables (cross-cutting)
   ontrack/                  OnTrack integration (rotating-token auth + data)
     __init__.py             re-exports the public API

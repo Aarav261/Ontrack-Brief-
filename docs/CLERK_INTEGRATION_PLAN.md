@@ -46,12 +46,18 @@ credential‑custody problem disappeared; it doesn't (see `core/crypto.py`, alre
 ## 4. Target architecture
 
 ```
+┌──── Landing page @ on-tracker.com (Vite+React SPA) ────┐
+│  <ClerkProvider>  <SignIn/> <SignUp/>  /unsubscribe    │
+│  Interactive auth happens HERE (Google / email)        │
+└───────────────────────────┬────────────────────────────┘
+                            │ session synced via Clerk syncHost
+                            ▼
 ┌─────────────────────────── Chrome Extension (MV3) ───────────────────────────┐
 │  Popup (React)                          Content script @ ontrack.deakin.edu.au │
 │  ┌───────────────────────────┐          ┌────────────────────────────────────┐│
 │  │ @clerk/chrome-extension   │          │ scrapes rotating OnTrack auth_token ││
-│  │  <SignIn/> <UserButton/>  │          └───────────────┬────────────────────┘│
-│  │  getToken() → JWT         │                          │ (no Clerk ctx here)  │
+│  │  syncHost → on-tracker.com │          └───────────────┬────────────────────┘│
+│  │  <UserButton/> getToken() │                          │ (no Clerk ctx here)  │
 │  └────────────┬──────────────┘                          ▼                      │
 │               │ Authorization: Bearer <clerk_jwt>   background service worker  │
 │               │                                     holds Clerk token, signs   │
@@ -84,7 +90,12 @@ These are the defaults this plan assumes. Flagged ⚠️ where you may want to d
 4. **Webhooks:** use Clerk → Svix webhooks for `user.deleted` (cleanup) and optionally `user.created`.
    ⚠️ Requires a public HTTPS URL for the backend (already deployed on Azure per manifest host perms).
 5. **Single Clerk instance** with Google enabled (and email as fallback). MFA optional, off by default.
-6. **No separate web dashboard** is introduced — all auth UI lives in the extension popup.
+6. **Companion landing page hosts sign-in.** A minimal Vite + React SPA at `on-tracker.com` is the
+   canonical Clerk auth surface. The extension does **not** run interactive auth itself — it uses Clerk's
+   `syncHost` to read the session established on the web domain. This sidesteps the project's biggest risk
+   (full `@clerk/chrome-extension` auth inside the MV3 popup/service worker — see §13). The page is
+   intentionally small: marketing/install, the Clerk `<SignIn/>`/`<SignUp/>` route, and an unsubscribe
+   landing. It is **not** a dashboard — brief settings (hour, weeks) stay in the extension popup.
 
 ## 6. Backend changes (Flask)
 
@@ -135,12 +146,26 @@ New/changed DB functions:
 - Brief job already iterates DB users — minimal change. Ensure the recipient email is the Clerk‑sourced
   `user["email"]`. Job IDs can stay `brief_{user_id}` (internal PK) or move to `brief_{clerk_user_id}`.
 
-## 7. Extension / frontend changes
+## 7. Frontend changes
 
-### 7.1 Dependencies & setup
+There are now **two** frontends: the landing page (where the user signs in) and the extension (which
+syncs that session). The landing page owns interactive auth; the extension is a consumer.
+
+### 7.0 Landing page (new) — `web/` (Vite + React SPA, deployed at `on-tracker.com`)
+- `<ClerkProvider publishableKey={VITE_CLERK_PUBLISHABLE_KEY}>` wrapping the app.
+- Routes: `/` (marketing + "Add to Chrome"), `/sign-in` + `/sign-up` (Clerk components),
+  `/unsubscribe` (landing for email-footer links; calls the backend unsubscribe endpoint).
+- This is the **`syncHost` target** the extension points at. Add the extension's origin to Clerk's
+  allowed origins so the session can sync.
+- Deploy as static build (Railway static service / Vercel / Netlify). Add the domain to the Clerk instance.
+
+### 7.1 Extension dependencies & setup
 - Add `@clerk/chrome-extension` to `extension/`.
-- Wrap the popup in `<ClerkProvider>` with the **publishable key** (`VITE_CLERK_PUBLISHABLE_KEY`) and the
-  `syncHost` / `chrome.storage` token cache the SDK requires for MV3.
+- Wrap the popup in `<ClerkProvider>` with the **publishable key** (`VITE_CLERK_PUBLISHABLE_KEY`) and
+  **`syncHost: "https://on-tracker.com"`** so the popup reads the session signed in on the web page,
+  plus the `chrome.storage` token cache the SDK requires for MV3.
+- If no session is present, the popup shows a "Sign in at on-tracker.com" CTA that opens the landing
+  page in a tab rather than rendering `<SignIn/>` inline.
 
 ### 7.2 `manifest.json`
 - Add a stable extension **`key`** (so the extension ID is fixed — Clerk allow‑lists it).
@@ -148,10 +173,12 @@ New/changed DB functions:
 - Keep `storage`; the SDK persists the Clerk session in `chrome.storage`.
 
 ### 7.3 UI
-- Replace the email‑entry `SignupFlow.jsx` with Clerk's sign‑in/sign‑up components (or `<SignIn/>` routed
-  view). Add `<UserButton/>` to `Header.jsx`.
+- Replace the email‑entry `SignupFlow.jsx`. The popup no longer renders `<SignIn/>` inline — when
+  signed out it shows a CTA that opens `on-tracker.com/sign-in` (auth happens on the web page, syncs back
+  via `syncHost`). Add `<UserButton/>` to `Header.jsx` for the signed‑in state.
 - New gating in `App.jsx`'s `view` state machine:
-  `signed-out → <SignIn/>` · `signed-in but no OnTrack token → "open OnTrack to link"` · `linked → snapshot`.
+  `signed-out → "Sign in at on-tracker.com" CTA` · `signed-in but no OnTrack token → "open OnTrack to
+  link"` · `linked → snapshot`.
 - `Settings.jsx`: email is now read‑only (from Clerk); keep brief hour / weeks controls.
 
 ### 7.4 Authenticated API calls — `extension/src/lib/api.js`
@@ -185,7 +212,7 @@ Existing rows are keyed by `email`/`username` with **no** `clerk_user_id`.
 
 | Var | Where | Purpose |
 | --- | --- | --- |
-| `CLERK_PUBLISHABLE_KEY` / `VITE_CLERK_PUBLISHABLE_KEY` | extension build | Clerk frontend SDK |
+| `VITE_CLERK_PUBLISHABLE_KEY` | extension + web build | Clerk frontend SDK (same key both surfaces) |
 | `CLERK_SECRET_KEY` | backend | only if using `clerk-backend-api` SDK path |
 | `CLERK_JWT_ISSUER` / frontend API URL | backend | JWKS + issuer validation |
 | `CLERK_WEBHOOK_SECRET` | backend | verify Svix webhook signatures |
@@ -215,18 +242,22 @@ Add a `.env.example` documenting all of the above alongside `SECRET_KEY` / `DATA
 
 ## 12. Phased rollout
 
-- **Phase 0 — Spike (de‑risk):** prove `@clerk/chrome-extension` works in the MV3 popup *and* the
-  background worker can attach a JWT. Output: a throwaway branch that signs in and calls one protected route.
+- **Phase 0 — Spike (de‑risk):** stand up the landing page with Clerk `<SignIn/>`, then prove the
+  extension popup can read that session via `syncHost` and attach a JWT to one protected route. Output: a
+  throwaway branch that signs in *on the web page* and makes one authenticated call from the extension.
 - **Phase 1 — Backend auth:** `core/clerk_auth.py`, schema `clerk_user_id`, JWKS verification, protect
   `/api/snapshot` behind auth while keeping a legacy fallback. No UI change yet.
-- **Phase 2 — Extension auth:** ClerkProvider, sign‑in UI, JWT on API calls, content‑script → background
+- **Phase 2 — Landing page + extension auth:** build the `web/` SPA (marketing, Clerk sign‑in, unsubscribe);
+  wire the extension's `syncHost`, signed‑in gating, JWT on API calls, and the content‑script → background
   linking flow.
 - **Phase 3 — Webhooks + migration:** `/webhooks/clerk`, email‑based claiming of legacy rows, comms.
 - **Phase 4 — Cleanup:** remove `username`‑as‑identity paths, tighten CORS, make `clerk_user_id` required.
 
 ## 13. Risks & open questions
 
-- ⚠️ **Clerk in MV3 + service worker** is the biggest unknown — validate in Phase 0 before committing.
+- ⚠️ **Clerk in MV3 + service worker** is the biggest unknown. The landing‑page + `syncHost` approach
+  (§5.6) is chosen specifically to reduce this: interactive auth runs on the web page, the extension only
+  reads the synced session. Still validate the `syncHost` read path in Phase 0 before committing.
 - ⚠️ **Conflict‑target change** in `upsert_user` (email → clerk_user_id) touches every write path; needs the
   dual‑path migration to avoid breaking existing users.
 - ⚠️ **Cost/complexity:** Clerk is a hosted dependency with its own pricing/limits; for a single‑user or
@@ -242,7 +273,7 @@ Add a `.env.example` documenting all of the above alongside `SECRET_KEY` / `DATA
 | --- | --- |
 | 0 — Spike | 0.5–1 day |
 | 1 — Backend auth | 1–2 days |
-| 2 — Extension auth | 2–3 days (content‑script flow is the long pole) |
+| 2 — Landing page + extension auth | 3–4 days (landing page ~1 day; content‑script flow is the long pole) |
 | 3 — Webhooks + migration | 1–2 days |
 | 4 — Cleanup | 0.5–1 day |
 
