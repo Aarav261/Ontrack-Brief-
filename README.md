@@ -73,8 +73,6 @@ Then load `extension/dist` via **Load unpacked** (steps 3–7 above). Use `npm r
 
 > **Tip:** you don't need to stay logged into OnTrack — just don't click *Log Out*. Closing the tab is fine.
 
-For the full design, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
-
 ---
 
 ## Local development
