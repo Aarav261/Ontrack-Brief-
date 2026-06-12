@@ -11,6 +11,8 @@
     "http://localhost:8000/*",
     "http://localhost:5173/*",
     "https://on-tracker.com/*",
+    "https://*.on-tracker.com/*",
+    "https://ontracker-production.up.railway.app/*",
     "https://*.clerk.accounts.dev/*",
     "https://*.azurewebsites.net/*"
   ],
