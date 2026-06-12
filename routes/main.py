@@ -178,6 +178,67 @@ def refresh_token():
     return {"ok": True}
 
 
+@main_bp.route("/link-ontrack", methods=["POST"])
+@limiter.limit("10 per minute")
+@require_clerk_auth
+def link_ontrack():
+    """Store the user's OnTrack token against their Clerk identity (Phase 2).
+
+    Identity (clerk_user_id + verified email) comes from the JWT; the body
+    carries only the scraped OnTrack creds + optional brief settings. This is
+    what clears the /api/snapshot "not_linked" state.
+    """
+    clerk_id = g.clerk_user_id
+    email = (g.clerk_claims or {}).get("email")
+    if not email:
+        # Clerk JWT template must expose an `email` claim (see setup docs).
+        return {"ok": False, "error": "no_email_claim"}, 400
+
+    data = request.get_json(silent=True) or {}
+    base_url = (data.get("base_url") or "https://ontrack.deakin.edu.au").rstrip("/")
+    username = (data.get("username") or "").strip()
+    auth_token = (data.get("auth_token") or "").strip()
+    try:
+        brief_hour = max(0, min(23, int(data.get("brief_hour", 8))))
+        recently_days = max(1, int(data.get("recently_completed_days", 7)))
+        max_todo = max(1, int(data.get("max_todo_tasks", 10)))
+    except (ValueError, TypeError):
+        return {"ok": False, "error": "invalid numbers"}, 400
+
+    if not username or not auth_token:
+        return {"ok": False, "error": "missing fields"}, 400
+
+    tm = TokenManager(base_url, username, auth_token)
+    try:
+        valid = tm.validate()
+    except requests.RequestException as exc:
+        log.warning("link-ontrack: OnTrack unreachable for %s: %s", username, exc)
+        return {"ok": False, "error": "OnTrack unreachable, try again"}, 503
+    if not valid:
+        return {"ok": False, "error": "invalid token"}, 401
+
+    user_id = upsert_user(
+        tm.base_url,
+        username,
+        tm.token,
+        email,
+        brief_hour,
+        recently_completed_days=recently_days,
+        max_todo_tasks=max_todo,
+        clerk_user_id=clerk_id,
+    )
+    schedule_brief(user_id, brief_hour)
+    scheduler.add_job(
+        run_brief,
+        DateTrigger(run_date=datetime.now() + timedelta(seconds=10)),
+        args=[user_id],
+        id=f"welcome_{user_id}",
+        replace_existing=True,
+    )
+    log.info("OnTrack linked for clerk_user_id=%s (user_id=%s)", clerk_id, user_id)
+    return {"ok": True}
+
+
 @main_bp.route("/api/snapshot", methods=["POST"])
 @limiter.limit("60 per minute")
 @require_clerk_auth
