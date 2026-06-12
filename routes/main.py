@@ -14,6 +14,7 @@ from core.db import (
     get_user_by_username,
     link_clerk_id_by_email,
     remove_user,
+    reset_token_fail,
     upsert_user,
     update_user_snapshot,
 )
@@ -159,6 +160,10 @@ def refresh_token():
     user = get_user_by_username(username)
     if not user:
         return {"ok": False, "error": "not subscribed"}, 404
+
+    # A live push from the extension proves the session is alive — clear any
+    # token-failure strikes the rotation-race poll may have accumulated.
+    reset_token_fail(user["email"])
 
     token_changed = user["auth_token"] != auth_token
     was_invalid = not user["token_valid"]

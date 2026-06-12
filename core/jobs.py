@@ -6,7 +6,14 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 
 from core.brief import build_brief_direct, pending_due_entries, render_html
-from core.db import get_all_users, get_user_by_id, init_db, mark_token_invalid
+from core.db import (
+    bump_token_fail,
+    get_all_users,
+    get_user_by_id,
+    init_db,
+    mark_token_invalid,
+    reset_token_fail,
+)
 from core.mailer import send_brief_to, send_reauth_email
 from core.ontrack import TokenManager, TokenExpiredError, fetch_active_projects_direct
 from extensions import scheduler
@@ -15,6 +22,10 @@ log = logging.getLogger(__name__)
 APP_URL = os.environ.get("APP_URL", "http://localhost:8000/")
 _PENDING_WINDOW_DAYS = 14
 _THIS_WEEK_DAYS = 6
+# Consecutive failed token checks before treating a token as truly expired.
+# Tolerates OnTrack's rotation races (a stale-but-superseded token reads as
+# rejected); a real logout fails every check and trips this within ~an hour.
+_FAIL_THRESHOLD = 3
 
 
 def run_brief(user_id: int) -> None:
@@ -51,10 +62,23 @@ def run_brief(user_id: int) -> None:
         due_this_week = len(pending_due_entries(brief, today, _THIS_WEEK_DAYS))
         html = render_html(pending_due, today, window_days=_PENDING_WINDOW_DAYS)
         send_brief_to(html, email, today, due_this_week)
+        reset_token_fail(email)  # brief succeeded — session is alive
     except TokenExpiredError:
+        strikes = bump_token_fail(email)
+        if strikes < _FAIL_THRESHOLD:
+            log.info(
+                "Brief token check failed for %s (strike %d/%d) — likely a rotation "
+                "race, not pausing",
+                email,
+                strikes,
+                _FAIL_THRESHOLD,
+            )
+            return
         log.warning(
-            "Token expired for %s — pausing briefs, waiting for extension to push fresh token",
+            "Token expired for %s after %d failed checks — pausing briefs, waiting "
+            "for extension to push fresh token",
             email,
+            strikes,
         )
         if scheduler.get_job(f"brief_{user_id}"):
             scheduler.remove_job(f"brief_{user_id}")
@@ -83,15 +107,28 @@ def refresh_all_tokens() -> None:
             )
             continue
         if not valid:
+            strikes = bump_token_fail(user["email"])
+            if strikes < _FAIL_THRESHOLD:
+                log.info(
+                    "Token check failed for %s (strike %d/%d) — likely a rotation "
+                    "race (browser/extension rotated it), not pausing",
+                    user["username"],
+                    strikes,
+                    _FAIL_THRESHOLD,
+                )
+                continue
             log.warning(
-                "Token expired for %s — pausing briefs, waiting for extension to push fresh token",
+                "Token for %s failed %d consecutive checks — pausing briefs, "
+                "waiting for extension to push fresh token",
                 user["username"],
+                strikes,
             )
             if scheduler.get_job(f"brief_{user['id']}"):
                 scheduler.remove_job(f"brief_{user['id']}")
             mark_token_invalid(user["email"])
             send_reauth_email(user["email"], APP_URL)
             continue
+        reset_token_fail(user["email"])  # valid check — clear any accumulated strikes
         tm.persist(user)
 
 

@@ -73,6 +73,7 @@ def init_db() -> None:
                     clerk_user_id           TEXT,
                     brief_hour              INTEGER NOT NULL DEFAULT 8,
                     token_valid             INTEGER NOT NULL DEFAULT 1,
+                    token_fail_count        INTEGER NOT NULL DEFAULT 0,
                     recently_completed_days INTEGER NOT NULL DEFAULT 7,
                     max_todo_tasks          INTEGER NOT NULL DEFAULT 10,
                     last_snapshot           TEXT,
@@ -86,6 +87,7 @@ def init_db() -> None:
                 ("max_todo_tasks", "INTEGER NOT NULL DEFAULT 10"),
                 ("last_snapshot", "TEXT"),
                 ("clerk_user_id", "TEXT"),
+                ("token_fail_count", "INTEGER NOT NULL DEFAULT 0"),
             ]:
                 cur.execute(f"""
                     DO $$
@@ -114,6 +116,7 @@ def init_db() -> None:
                     clerk_user_id           TEXT,
                     brief_hour              INTEGER NOT NULL DEFAULT 8,
                     token_valid             INTEGER NOT NULL DEFAULT 1,
+                    token_fail_count        INTEGER NOT NULL DEFAULT 0,
                     recently_completed_days INTEGER NOT NULL DEFAULT 7,
                     max_todo_tasks          INTEGER NOT NULL DEFAULT 10,
                     last_snapshot           TEXT,
@@ -128,6 +131,7 @@ def init_db() -> None:
                 ("max_todo_tasks", "INTEGER NOT NULL DEFAULT 10"),
                 ("last_snapshot", "TEXT"),
                 ("clerk_user_id", "TEXT"),
+                ("token_fail_count", "INTEGER NOT NULL DEFAULT 0"),
             ]:
                 if col not in cols:
                     cur.execute(f"ALTER TABLE users ADD COLUMN {col} {typedef}")
@@ -229,6 +233,34 @@ def mark_token_invalid(email: str) -> None:
     with _connection() as conn:
         cur = conn.cursor()
         cur.execute(f"UPDATE users SET token_valid = 0 WHERE email = {_P}", (email,))
+
+
+def bump_token_fail(email: str) -> int:
+    """Increment the consecutive token-validation failure count; return the new value.
+
+    Used to tolerate transient rejections from OnTrack's token rotation — a single
+    failed check is usually a rotation race, not a real expiry.
+    """
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"UPDATE users SET token_fail_count = token_fail_count + 1 WHERE email = {_P}",
+            (email,),
+        )
+        cur.execute(
+            f"SELECT token_fail_count FROM users WHERE email = {_P}", (email,)
+        )
+        row = cur.fetchone()
+        return row[0] if row else 0
+
+
+def reset_token_fail(email: str) -> None:
+    """Clear the failure count — the session is proven alive (valid check or fresh push)."""
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"UPDATE users SET token_fail_count = 0 WHERE email = {_P}", (email,)
+        )
 
 
 def get_all_users() -> list[dict]:
