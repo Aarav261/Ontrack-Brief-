@@ -118,3 +118,12 @@ scripts/          packaging + maintenance helpers
 ## Tech stack
 
 **Backend** Flask · APScheduler · PostgreSQL · PyJWT  ·  **Auth** Clerk  ·  **Email** Resend  ·  **Frontend** React + Vite (web app + MV3 extension)  ·  **Hosting** Railway
+
+---
+
+## License
+
+© 2026 Aarav. **All rights reserved.** This source is published for reference and
+portfolio purposes only — it is **not** open source. You may view it, but you may
+not use, copy, deploy, modify, or distribute it without written permission. See
+[`LICENSE`](LICENSE) for the full terms.
