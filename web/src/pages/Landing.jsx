@@ -3,17 +3,17 @@ import { SignedIn, SignedOut, UserButton } from '@clerk/clerk-react'
 
 const FEATURES = [
   {
-    icon: '🎯',
+    n: '01',
     title: 'Prioritised for you',
     body: 'Tasks ranked by urgency and grade target — red-flag deadlines first, the HD-pushing work next.',
   },
   {
-    icon: '📬',
+    n: '02',
     title: 'In your inbox by morning',
     body: 'A clean weekday brief lands before you wake up. No app to open, no laptop to leave on.',
   },
   {
-    icon: '💬',
+    n: '03',
     title: 'Context included',
     body: 'Every task links straight to OnTrack, with the latest tutor feedback right inside the email.',
   },
@@ -28,7 +28,7 @@ export default function Landing() {
         </span>
         <nav className="topbar-right">
           <SignedOut>
-            <Link className="btn btn-ghost" to="/sign-in">
+            <Link className="navlink" to="/sign-in">
               Sign in
             </Link>
           </SignedOut>
@@ -39,8 +39,9 @@ export default function Landing() {
       </header>
 
       <main className="hero">
+        <p className="eyebrow">The weekday morning brief</p>
         <h1 className="hero-title">
-          Your OnTrack week, sorted before you wake up.
+          Your OnTrack week, <em>sorted</em> before you wake up.
         </h1>
         <p className="hero-sub">
           A weekday morning brief that ranks your OnTrack tasks by urgency and
@@ -67,9 +68,9 @@ export default function Landing() {
 
       <section className="features">
         {FEATURES.map((f) => (
-          <div className="feature" key={f.title}>
-            <div className="feature-icon">{f.icon}</div>
-            <div className="feature-title">{f.title}</div>
+          <div className="feature" key={f.n}>
+            <span className="feature-num">{f.n}</span>
+            <h3 className="feature-title">{f.title}</h3>
             <p className="feature-body">{f.body}</p>
           </div>
         ))}
