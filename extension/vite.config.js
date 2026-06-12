@@ -40,6 +40,9 @@ export default defineConfig(({ mode }) => {
       'import.meta.env.VITE_CLERK_SYNC_HOST': JSON.stringify(
         pick('VITE_CLERK_SYNC_HOST')
       ),
+      'import.meta.env.VITE_WEB_APP_URL': JSON.stringify(
+        pick('VITE_WEB_APP_URL')
+      ),
     },
     build: {
       outDir: 'dist',
