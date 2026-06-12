@@ -20,6 +20,8 @@ dist/
 
 # Data & secrets
 *.db
+*.pem
+extension-private-key.pem
 
 # Misc
 .DS_Store
