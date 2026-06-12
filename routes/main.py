@@ -10,7 +10,9 @@ from core.clerk_auth import require_clerk_auth
 from core.constants import URGENT, TODO, WAITING, SUBMITTED
 from core.db import (
     get_all_users,
+    get_user_by_clerk_id,
     get_user_by_username,
+    link_clerk_id_by_email,
     remove_user,
     upsert_user,
     update_user_snapshot,
@@ -34,7 +36,12 @@ main_bp = Blueprint("main", __name__)
 @require_clerk_auth
 def whoami():
     """Phase 0 spike: proves a Clerk session JWT verifies on the backend."""
-    return jsonify({"clerk_user_id": g.clerk_user_id})
+    return jsonify(
+        {
+            "clerk_user_id": g.clerk_user_id,
+            "email": (g.clerk_claims or {}).get("email"),
+        }
+    )
 
 
 def _stale_snapshot_response(db_user):
@@ -176,29 +183,90 @@ def refresh_token():
     return {"ok": True}
 
 
-@main_bp.route("/api/snapshot", methods=["POST"])
-@limiter.limit("60 per minute")
-def api_snapshot():
+@main_bp.route("/link-ontrack", methods=["POST"])
+@limiter.limit("10 per minute")
+@require_clerk_auth
+def link_ontrack():
+    """Store the user's OnTrack token against their Clerk identity (Phase 2).
+
+    Identity (clerk_user_id + verified email) comes from the JWT; the body
+    carries only the scraped OnTrack creds + optional brief settings. This is
+    what clears the /api/snapshot "not_linked" state.
+    """
+    clerk_id = g.clerk_user_id
+    email = (g.clerk_claims or {}).get("email")
+    if not email:
+        # Clerk JWT template must expose an `email` claim (see setup docs).
+        return {"ok": False, "error": "no_email_claim"}, 400
+
     data = request.get_json(silent=True) or {}
+    base_url = (data.get("base_url") or "https://ontrack.deakin.edu.au").rstrip("/")
     username = (data.get("username") or "").strip()
     auth_token = (data.get("auth_token") or "").strip()
+    try:
+        brief_hour = max(0, min(23, int(data.get("brief_hour", 8))))
+        recently_days = max(1, int(data.get("recently_completed_days", 7)))
+        max_todo = max(1, int(data.get("max_todo_tasks", 10)))
+    except (ValueError, TypeError):
+        return {"ok": False, "error": "invalid numbers"}, 400
+
+    if not username or not auth_token:
+        return {"ok": False, "error": "missing fields"}, 400
+
+    tm = TokenManager(base_url, username, auth_token)
+    try:
+        valid = tm.validate()
+    except requests.RequestException as exc:
+        log.warning("link-ontrack: OnTrack unreachable for %s: %s", username, exc)
+        return {"ok": False, "error": "OnTrack unreachable, try again"}, 503
+    if not valid:
+        return {"ok": False, "error": "invalid token"}, 401
+
+    user_id = upsert_user(
+        tm.base_url,
+        username,
+        tm.token,
+        email,
+        brief_hour,
+        recently_completed_days=recently_days,
+        max_todo_tasks=max_todo,
+        clerk_user_id=clerk_id,
+    )
+    schedule_brief(user_id, brief_hour)
+    scheduler.add_job(
+        run_brief,
+        DateTrigger(run_date=datetime.now() + timedelta(seconds=10)),
+        args=[user_id],
+        id=f"welcome_{user_id}",
+        replace_existing=True,
+    )
+    log.info("OnTrack linked for clerk_user_id=%s (user_id=%s)", clerk_id, user_id)
+    return {"ok": True}
+
+
+@main_bp.route("/api/snapshot", methods=["POST"])
+@limiter.limit("60 per minute")
+@require_clerk_auth
+def api_snapshot():
+    data = request.get_json(silent=True) or {}
     base_url = (data.get("base_url") or "https://ontrack.deakin.edu.au").rstrip("/")
     days_count = min(14, max(1, int(data.get("days", 7))))
 
-    if not username or not auth_token:
-        return {"error": "missing fields"}, 400
+    # Identity comes only from the verified Clerk session — no body-supplied
+    # username. Resolve by clerk_user_id, claiming a legacy row by verified
+    # email on first sign-in. The server already holds the OnTrack token.
+    clerk_id = g.clerk_user_id
+    clerk_email = (g.clerk_claims or {}).get("email")
+    db_user = get_user_by_clerk_id(clerk_id)
+    if not db_user and clerk_email:
+        db_user = link_clerk_id_by_email(clerk_id, clerk_email)
+    if not db_user:
+        return {"error": "not_linked", "hint": "link_ontrack"}, 404
 
-    db_user = get_user_by_username(username)
-    if db_user:
-        auth_token = db_user["auth_token"]
-        base_url = db_user["base_url"] or base_url
-        log.info("api_snapshot: using DB token ...%s for %s", auth_token[-6:], username)
-    else:
-        log.warning(
-            "api_snapshot: %s not found in DB — using extension token ...%s",
-            username,
-            auth_token[-6:],
-        )
+    username = db_user["username"]
+    auth_token = db_user["auth_token"]
+    base_url = db_user["base_url"] or base_url
+    log.info("api_snapshot: %s (clerk %s)", username, clerk_id)
 
     # Dedicated TokenManager so token capture doesn't interfere with brief jobs.
     tm = TokenManager(base_url, username, auth_token)
@@ -337,3 +405,22 @@ def unsubscribe(email: str):
             break
     remove_user(email)
     return render_template("unsubscribed.html", email=email)
+
+
+@main_bp.route("/unsubscribe", methods=["POST"])
+@limiter.limit("10 per minute")
+@require_clerk_auth
+def unsubscribe_clerk():
+    """Unsubscribe the caller, keyed off their verified Clerk identity.
+
+    Keying on clerk_user_id (not an email in the URL) prevents anyone from
+    unsubscribing another user by guessing their address.
+    """
+    user = get_user_by_clerk_id(g.clerk_user_id)
+    if not user:
+        return {"ok": True}  # nothing linked — idempotent no-op
+    job_id = f"brief_{user['id']}"
+    if scheduler.get_job(job_id):
+        scheduler.remove_job(job_id)
+    remove_user(user["email"])
+    return {"ok": True}

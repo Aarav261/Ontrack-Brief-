@@ -17,9 +17,12 @@ venv/
 # Node / extension
 node_modules/
 dist/
+.vite/
 
 # Data & secrets
 *.db
+*.pem
+extension-private-key.pem
 
 # Misc
 .DS_Store

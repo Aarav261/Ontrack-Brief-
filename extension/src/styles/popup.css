@@ -729,3 +729,44 @@ body {
   font-size: 11px;
   color: #ccc;
 }
+
+/* Read-only Clerk account email in Settings */
+.account-email {
+  padding: 8px 10px;
+  background: #f4f6fb;
+  border: 1px solid #e3e8ef;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #333;
+  word-break: break-all;
+}
+
+/* Signed-out call-to-action (popup can't run interactive auth) */
+.signin-cta {
+  padding: 24px 18px;
+  text-align: center;
+}
+.signin-cta p {
+  font-size: 13px;
+  color: #555;
+  margin: 0 0 12px;
+}
+.signin-btn {
+  display: inline-block;
+  padding: 9px 16px;
+  background: #4361ee;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.signin-btn:hover {
+  background: #3a53d0;
+}
+.signin-hint {
+  margin-top: 14px !important;
+  font-size: 11px !important;
+  color: #999 !important;
+}

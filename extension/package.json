@@ -1,20 +1,17 @@
 {
-  "name": "ontrack-brief-web",
+  "name": "ontrack-brief-extension",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
-    "start": "serve -s dist -l ${PORT:-3000}"
+    "lint": "eslint ."
   },
   "dependencies": {
-    "@clerk/clerk-react": "^5.0.0",
+    "@clerk/chrome-extension": "^2.0.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-router-dom": "^6.26.0",
-    "serve": "^14.2.3"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",

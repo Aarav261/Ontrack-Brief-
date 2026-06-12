@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useAuth } from '@clerk/chrome-extension'
 import Header from './components/Header'
 import StatusPill from './components/StatusPill'
 import NoAuth from './components/NoAuth'
-import SignupFlow from './components/SignupFlow'
+import SignInCTA from './components/SignInCTA'
 import SnapshotView from './components/SnapshotView'
 import Settings from './components/Settings'
 import Footer from './components/Footer'
@@ -11,6 +12,7 @@ import { syncLabel } from './utils/time'
 import { SNAPSHOT_KEY, SNAPSHOT_TTL_MS, DEFAULT_BASE_URL } from './constants'
 
 export default function App() {
+  const { isLoaded, isSignedIn, getToken } = useAuth()
   const [storageData, setStorageData] = useState(null)
   const [activeTab, setActiveTab] = useState('main')
   const [statusType, setStatusType] = useState('warning')
@@ -20,35 +22,33 @@ export default function App() {
   const [stripLoading, setStripLoading] = useState(false)
   const [footerSync, setFooterSync] = useState('')
   const snapshotAuthRef = useRef(null)
+  const didInitRef = useRef(false)
 
   const setStatus = useCallback((type, text) => {
     setStatusType(type)
     setStatusText(text)
   }, [])
 
-  // Derive which section to show from storage state
-  const view = !storageData
+  // View machine. Identity is now the Clerk session (synced from the web app);
+  // OnTrack creds (auth_token/username) still come from the content script.
+  const view = !isLoaded || !storageData
     ? 'loading'
-    : !storageData.auth_token || !storageData.username
-      ? 'no-auth'
-      : !storageData.subscribed_email && !storageData.signup_skipped
-        ? 'signup'
+    : !isSignedIn
+      ? 'signed-out'
+      : !storageData.auth_token || !storageData.username
+        ? 'no-ontrack'
         : 'snapshot'
 
   const loadSnapshot = useCallback(
-    (authToken, username, baseUrl, force = false, numDays = 7) => {
-      snapshotAuthRef.current = { authToken, username, baseUrl, days: numDays }
+    (username, baseUrl, force = false, numDays = 7) => {
+      snapshotAuthRef.current = { username, baseUrl, days: numDays }
       setStripLoading(true)
       setDays(null)
       setFeedback([])
 
       chrome.storage.local.get([SNAPSHOT_KEY], (stored) => {
         const cached = stored[SNAPSHOT_KEY]
-        if (
-          !force &&
-          cached?.data &&
-          Date.now() - cached.ts < SNAPSHOT_TTL_MS
-        ) {
+        if (!force && cached?.data && Date.now() - cached.ts < SNAPSHOT_TTL_MS) {
           setDays(cached.data.days)
           setFeedback(cached.data.feedback || [])
           setStripLoading(false)
@@ -56,28 +56,20 @@ export default function App() {
           return
         }
 
+        // Server resolves the user from the verified Clerk JWT; the body no
+        // longer carries identity (just snapshot params).
         api('/api/snapshot', {
           method: 'POST',
-          body: {
-            username,
-            auth_token: authToken,
-            base_url: baseUrl || DEFAULT_BASE_URL,
-            days: numDays,
-          },
+          getToken,
+          body: { base_url: baseUrl || DEFAULT_BASE_URL, days: numDays },
         })
           .then((data) => {
             const ts = Date.now()
             if (data.is_stale) {
-              setStatus(
-                'warning',
-                'Session expired — open OnTrack for latest updates'
-              )
+              setStatus('warning', 'Session expired — open OnTrack for latest updates')
             } else {
               setStatus('ok', `Logged in as ${username}`)
               chrome.storage.local.set({ [SNAPSHOT_KEY]: { ts, data } })
-            }
-            if (data.auth_token && data.auth_token !== authToken) {
-              chrome.storage.local.set({ auth_token: data.auth_token })
             }
             setDays(data.days)
             setFeedback(data.feedback || [])
@@ -86,64 +78,75 @@ export default function App() {
           .catch((err) => {
             if (err?.data?.hint === 'open_ontrack') {
               setStatus('warning', 'Session expired — open OnTrack to refresh')
+            } else if (err?.data?.error === 'not_linked') {
+              setStatus('warning', 'Open OnTrack so we can link your account')
             } else {
-              setStatus(
-                'warning',
-                'Could not load tasks — is the OnTrack Brief server running on port 5001?'
-              )
+              setStatus('warning', 'Could not load tasks — is the server running?')
             }
             setFeedback([])
           })
           .finally(() => setStripLoading(false))
       })
     },
-    [setStatus]
+    [setStatus, getToken]
   )
 
-  // Load from chrome.storage on mount
+  // Bind the scraped OnTrack token to the Clerk identity, then load tasks.
+  const linkAndLoad = useCallback(
+    (data) => {
+      const weeks = parseInt(data.strip_weeks || '1', 10)
+      api('/link-ontrack', {
+        method: 'POST',
+        getToken,
+        body: {
+          base_url: data.base_url || DEFAULT_BASE_URL,
+          username: data.username,
+          auth_token: data.auth_token,
+          brief_hour: parseInt(data.brief_hour || '8', 10),
+        },
+      })
+        .catch(() => {}) // non-fatal: snapshot will surface a clear status
+        .finally(() =>
+          loadSnapshot(data.username, data.base_url, false, weeks * 7)
+        )
+    },
+    [getToken, loadSnapshot]
+  )
+
+  // Load storage once Clerk has resolved; drive the flow off the session.
   useEffect(() => {
+    if (!isLoaded || didInitRef.current) return
     chrome.storage.local.get(
       [
         'auth_token',
         'username',
         'base_url',
-        'subscribed_email',
         'strip_weeks',
         'recently_completed_days',
         'max_todo_tasks',
-        'signup_skipped',
         'brief_hour',
+        'brief_weeks',
       ],
       (data) => {
+        didInitRef.current = true
         setStorageData(data)
-        if (data.auth_token && data.username) {
+        if (!isSignedIn) {
+          setStatus('warning', 'Sign in to start your OnTrack Brief')
+        } else if (data.auth_token && data.username) {
           setStatus('ok', `Logged in as ${data.username}`)
-          if (data.subscribed_email || data.signup_skipped) {
-            const weeks = parseInt(data.strip_weeks || '1', 10)
-            loadSnapshot(
-              data.auth_token,
-              data.username,
-              data.base_url,
-              false,
-              weeks * 7
-            )
-          }
+          linkAndLoad(data)
         } else {
-          setStatus(
-            'warning',
-            'Open OnTrack — your tasks will appear automatically'
-          )
+          setStatus('warning', 'Open OnTrack — your tasks will appear automatically')
         }
       }
     )
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount
-  }, [])
+  }, [isLoaded, isSignedIn, setStatus, linkAndLoad])
 
   const handleRefresh = () => {
     const a = snapshotAuthRef.current
     if (!a) return
     chrome.storage.local.remove(SNAPSHOT_KEY, () => {
-      loadSnapshot(a.authToken, a.username, a.baseUrl, true, a.days)
+      loadSnapshot(a.username, a.baseUrl, true, a.days)
     })
   }
 
@@ -153,7 +156,7 @@ export default function App() {
     const a = snapshotAuthRef.current
     if (a) {
       chrome.storage.local.remove(SNAPSHOT_KEY, () => {
-        loadSnapshot(a.authToken, a.username, a.baseUrl, true, weeks * 7)
+        loadSnapshot(a.username, a.baseUrl, true, weeks * 7)
       })
     }
   }
@@ -163,90 +166,38 @@ export default function App() {
     setStorageData((prev) => ({ ...prev, brief_weeks: String(weeks) }))
   }
 
-  const handleSignup = (email) =>
+  // Persist brief settings against the Clerk-linked account (email is sourced
+  // from Clerk server-side, so it's no longer entered here).
+  const handleSaveSettings = ({ hour, briefWeeks }) =>
     new Promise((resolve, reject) => {
-      chrome.storage.local.get(
-        ['auth_token', 'username', 'base_url'],
-        (stored) => {
-          api('/register', {
-            method: 'POST',
-            body: {
-              base_url: stored.base_url || DEFAULT_BASE_URL,
-              username: stored.username,
-              auth_token: stored.auth_token,
-              email,
-              brief_hour: 8,
-            },
-          })
-            .then((res) => {
-              if (res.ok) {
-                chrome.storage.local.set({ subscribed_email: email }, () => {
-                  setStorageData((prev) => ({
-                    ...prev,
-                    subscribed_email: email,
-                  }))
-                })
-              }
-              resolve(res)
-            })
-            .catch((err) => {
-              // A server error response carries the {ok:false, error} body — let
-              // the form surface it. Only a real network failure should reject.
-              if (err?.data && Object.keys(err.data).length) resolve(err.data)
-              else reject(err)
-            })
+      chrome.storage.local.get(['auth_token', 'username', 'base_url'], (stored) => {
+        if (!stored.auth_token || !stored.username) {
+          reject(new Error('no-session'))
+          return
         }
-      )
+        api('/link-ontrack', {
+          method: 'POST',
+          getToken,
+          body: {
+            base_url: stored.base_url || DEFAULT_BASE_URL,
+            username: stored.username,
+            auth_token: stored.auth_token,
+            brief_hour: parseInt(hour, 10),
+            brief_days: parseInt(briefWeeks, 10) * 7,
+          },
+        })
+          .then(() => {
+            chrome.storage.local.set({ brief_hour: hour, brief_weeks: briefWeeks })
+            setStorageData((prev) => ({ ...prev, brief_hour: hour }))
+            resolve()
+          })
+          .catch(reject)
+      })
     })
 
-  const handleSkipSignup = () => {
-    chrome.storage.local.set({ signup_skipped: true })
-    setStorageData((prev) => ({ ...prev, signup_skipped: true }))
-  }
-
-  const handleSubscribe = ({ email, hour, briefWeeks }) =>
-    new Promise((resolve, reject) => {
-      chrome.storage.local.get(
-        ['auth_token', 'username', 'base_url'],
-        (stored) => {
-          if (!stored.auth_token || !stored.username) {
-            reject(new Error('no-session'))
-            return
-          }
-          api('/setup', {
-            method: 'POST',
-            body: {
-              base_url: stored.base_url || DEFAULT_BASE_URL,
-              username: stored.username,
-              auth_token: stored.auth_token,
-              email,
-              brief_hour: parseInt(hour, 10),
-              brief_days: parseInt(briefWeeks, 10) * 7,
-            },
-          })
-            .then(() => {
-              chrome.storage.local.set({
-                subscribed_email: email,
-                brief_hour: hour,
-                brief_weeks: briefWeeks,
-              })
-              setStorageData((prev) => ({ ...prev, subscribed_email: email }))
-              resolve()
-            })
-            .catch(reject) // err carries .status for the Settings handler
-        }
-      )
-    })
-
-  const handleUnsubscribe = (email) =>
-    api(`/unsubscribe/${encodeURIComponent(email)}`).then(() => {
-      chrome.storage.local.remove(['subscribed_email', 'signup_skipped'])
-      setStorageData((prev) => ({
-        ...prev,
-        subscribed_email: undefined,
-        signup_skipped: undefined,
-      }))
-      setStatus('warning', 'Unsubscribed — enter your email to re-subscribe.')
+  const handleUnsubscribe = () =>
+    api('/unsubscribe', { method: 'POST', getToken }).then(() => {
+      setStatus('warning', 'Unsubscribed — your daily briefs are paused.')
     })
 
   const username = storageData?.username || ''
@@ -261,34 +212,24 @@ export default function App() {
         settingsActive={activeTab === 'settings'}
       />
 
-      {statusType !== 'ok' && (
-        <StatusPill type={statusType} text={statusText} />
-      )}
+      {statusType !== 'ok' && <StatusPill type={statusType} text={statusText} />}
 
       {activeTab === 'main' && (
         <>
-          {view === 'no-auth' && <NoAuth />}
-          {view === 'signup' && (
-            <SignupFlow onSignup={handleSignup} onSkip={handleSkipSignup} />
-          )}
+          {view === 'signed-out' && <SignInCTA />}
+          {view === 'no-ontrack' && <NoAuth />}
           {view === 'snapshot' && (
-            <SnapshotView
-              days={days}
-              loading={stripLoading}
-              feedback={feedback}
-            />
+            <SnapshotView days={days} loading={stripLoading} feedback={feedback} />
           )}
         </>
       )}
 
-      {activeTab === 'settings' && storageData && (
+      {activeTab === 'settings' && storageData && isSignedIn && (
         <Settings
-          initialEmail={storageData.subscribed_email || ''}
           initialHour={storageData.brief_hour || '8'}
           initialBriefWeeks={storageData.brief_weeks || '1'}
           initialStripWeeks={storageData.strip_weeks || '1'}
-          subscribedEmail={storageData.subscribed_email}
-          onSubscribe={handleSubscribe}
+          onSubscribe={handleSaveSettings}
           onUnsubscribe={handleUnsubscribe}
           onStripWeeksChange={handleStripWeeksChange}
           onBriefWeeksChange={handleBriefWeeksChange}

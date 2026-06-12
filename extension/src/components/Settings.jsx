@@ -1,17 +1,19 @@
 import { useState } from 'react'
+import { useUser } from '@clerk/chrome-extension'
 
 export default function Settings({
-  initialEmail,
   initialHour,
   initialBriefWeeks,
   initialStripWeeks,
-  subscribedEmail,
   onSubscribe,
   onUnsubscribe,
   onStripWeeksChange,
   onBriefWeeksChange,
 }) {
-  const [email, setEmail] = useState(initialEmail)
+  const { user } = useUser()
+  // Recipient is the verified Clerk account email — not user-editable.
+  const accountEmail = user?.primaryEmailAddress?.emailAddress || ''
+
   const [hour, setHour] = useState(initialHour)
   const [briefWeeks, setBriefWeeks] = useState(initialBriefWeeks)
   const [stripWeeks, setStripWeeks] = useState(initialStripWeeks)
@@ -19,22 +21,17 @@ export default function Settings({
   const [msg, setMsg] = useState(null)
 
   async function handleSubscribe() {
-    if (!email || !email.includes('@')) {
-      setMsg({ type: 'error', text: 'Enter a valid email address.' })
-      return
-    }
     setLoading(true)
     setMsg(null)
     try {
-      await onSubscribe({ email, hour, briefWeeks })
+      await onSubscribe({ hour, briefWeeks })
       setMsg({ type: 'success', text: 'Done! Check your inbox in a moment.' })
     } catch (err) {
       let text
       if (err.message === 'no-session') {
         text = 'No OnTrack session found. Open OnTrack first.'
       } else if (err.status === 400) {
-        text =
-          'Session expired — log out and back in to OnTrack, then try again.'
+        text = 'Session expired — log out and back in to OnTrack, then try again.'
       } else if (err.status) {
         text = `Server error (${err.status}).`
       } else {
@@ -47,9 +44,8 @@ export default function Settings({
   }
 
   async function handleUnsubscribe() {
-    if (!subscribedEmail) return
     try {
-      await onUnsubscribe(subscribedEmail)
+      await onUnsubscribe()
       setMsg({ type: 'success', text: "You've been unsubscribed." })
     } catch {
       setMsg({ type: 'error', text: 'Could not reach server.' })
@@ -71,17 +67,12 @@ export default function Settings({
       <div className="settings-card">
         <div className="settings-heading">Email Briefs</div>
         <p className="settings-sub">
-          Optional — get a daily task summary by email on weekday mornings.
+          A daily task summary, sent to your account email on weekday mornings.
         </p>
 
         <div className="field-group">
-          <label>Your email</label>
-          <input
-            type="email"
-            placeholder="you@example.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
+          <label>Briefs are sent to</label>
+          <div className="account-email">{accountEmail || 'your account email'}</div>
         </div>
 
         <div className="field-group">
@@ -120,18 +111,16 @@ export default function Settings({
         <button
           className="subscribe-btn"
           onClick={handleSubscribe}
-          disabled={loading || !email}
+          disabled={loading}
         >
-          {loading ? 'Enabling…' : 'Enable email briefs'}
+          {loading ? 'Saving…' : 'Enable email briefs'}
         </button>
 
         {msg && <div className={`msg ${msg.type}`}>{msg.text}</div>}
 
-        {subscribedEmail && (
-          <div className="unsubscribe">
-            <a onClick={handleUnsubscribe}>Unsubscribe</a>
-          </div>
-        )}
+        <div className="unsubscribe">
+          <a onClick={handleUnsubscribe}>Unsubscribe</a>
+        </div>
       </div>
     </div>
   )

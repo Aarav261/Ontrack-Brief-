@@ -12,15 +12,23 @@ const DEFAULT_TIMEOUT_MS = 10000
 
 export async function api(
   path,
-  { method = 'GET', body, timeout = DEFAULT_TIMEOUT_MS } = {}
+  { method = 'GET', body, timeout = DEFAULT_TIMEOUT_MS, getToken } = {}
 ) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeout)
 
   try {
+    const headers = {}
+    if (body) headers['Content-Type'] = 'application/json'
+    // Clerk session JWT for routes that derive identity from the verified token.
+    if (getToken) {
+      const token = await getToken()
+      if (token) headers['Authorization'] = `Bearer ${token}`
+    }
+
     const res = await fetch(`${window.APP_URL}${path}`, {
       method,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      headers: Object.keys(headers).length ? headers : undefined,
       body: body ? JSON.stringify(body) : undefined,
       signal: controller.signal,
     })
