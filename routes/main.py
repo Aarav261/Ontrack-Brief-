@@ -10,7 +10,9 @@ from core.clerk_auth import require_clerk_auth
 from core.constants import URGENT, TODO, WAITING, SUBMITTED
 from core.db import (
     get_all_users,
+    get_user_by_clerk_id,
     get_user_by_username,
+    link_clerk_id_by_email,
     remove_user,
     upsert_user,
     update_user_snapshot,
@@ -178,27 +180,27 @@ def refresh_token():
 
 @main_bp.route("/api/snapshot", methods=["POST"])
 @limiter.limit("60 per minute")
+@require_clerk_auth
 def api_snapshot():
     data = request.get_json(silent=True) or {}
-    username = (data.get("username") or "").strip()
-    auth_token = (data.get("auth_token") or "").strip()
     base_url = (data.get("base_url") or "https://ontrack.deakin.edu.au").rstrip("/")
     days_count = min(14, max(1, int(data.get("days", 7))))
 
-    if not username or not auth_token:
-        return {"error": "missing fields"}, 400
+    # Identity comes only from the verified Clerk session — no body-supplied
+    # username. Resolve by clerk_user_id, claiming a legacy row by verified
+    # email on first sign-in. The server already holds the OnTrack token.
+    clerk_id = g.clerk_user_id
+    clerk_email = (g.clerk_claims or {}).get("email")
+    db_user = get_user_by_clerk_id(clerk_id)
+    if not db_user and clerk_email:
+        db_user = link_clerk_id_by_email(clerk_id, clerk_email)
+    if not db_user:
+        return {"error": "not_linked", "hint": "link_ontrack"}, 404
 
-    db_user = get_user_by_username(username)
-    if db_user:
-        auth_token = db_user["auth_token"]
-        base_url = db_user["base_url"] or base_url
-        log.info("api_snapshot: using DB token ...%s for %s", auth_token[-6:], username)
-    else:
-        log.warning(
-            "api_snapshot: %s not found in DB — using extension token ...%s",
-            username,
-            auth_token[-6:],
-        )
+    username = db_user["username"]
+    auth_token = db_user["auth_token"]
+    base_url = db_user["base_url"] or base_url
+    log.info("api_snapshot: %s (clerk %s)", username, clerk_id)
 
     # Dedicated TokenManager so token capture doesn't interfere with brief jobs.
     tm = TokenManager(base_url, username, auth_token)
