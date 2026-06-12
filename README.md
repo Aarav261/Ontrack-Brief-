@@ -39,7 +39,7 @@ The companion Chrome extension shows the same tasks live in a popup and keeps yo
 
 ### Option A — Download & load unpacked (no build needed)
 
-1. **Download** the latest `ontrack-brief-extension.zip` from the **[Releases page »](https://github.com/Aarav261/Ontracker/releases/latest)**
+1. **Download** the latest extension `.zip` from the **[Releases page »](https://github.com/Aarav261/Ontracker/releases/latest)**
 2. **Unzip** it — you'll get a folder named `ontrack-brief-extension`.
 3. Open **`chrome://extensions`** in Chrome.
 4. Toggle **Developer mode** on (top-right).
