@@ -1,100 +1,120 @@
-# OnTrack Morning Brief
+<div align="center">
 
-A weekday email brief for [OnTrack](https://github.com/doubtfire-lms/doubtfire-web) students that prioritises tasks by urgency and grade target, then delivers a clean, link-rich HTML summary each morning—even when your laptop is closed.
+<img src="assets/logo.png" alt="OnTrack(er)" width="120" />
 
-Each task title links directly to its corresponding OnTrack page.
+# OnTrack(er)
+
+**Your OnTrack week, sorted before you wake up.**
+
+A weekday morning brief that ranks your [OnTrack](https://github.com/doubtfire-lms/doubtfire-web) tasks by urgency and grade target — links and tutor feedback included — and emails it to you. Even with your laptop closed.
+
+<br/>
+
+![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-4361ee?style=flat-square&logo=googlechrome&logoColor=white)
+![Backend](https://img.shields.io/badge/Backend-Flask-000000?style=flat-square&logo=flask&logoColor=white)
+![Auth](https://img.shields.io/badge/Auth-Clerk-6c47ff?style=flat-square)
+![Email](https://img.shields.io/badge/Email-Resend-000000?style=flat-square)
+
+</div>
+
+---
 
 ## What it does
 
-Every weekday morning, the app fetches your active OnTrack projects and emails a brief organised into sections:
+Every weekday morning, OnTrack(er) fetches your active OnTrack projects and emails a brief organised into sections — ordered by urgency (red ≤ 3 days first), then by grade target (HD → P) within each group. Urgent and discuss tasks include the latest tutor comment inline.
 
 | Section | Tasks included |
 |---|---|
-| 🚨 Needs Attention | Overdue, redo, fix & resubmit, need help |
-| 🎯 Upcoming Tasks | Not started, in progress |
-| 💬 Discuss with Tutor | Discuss, demonstrate |
-| 📬 Submitted | Waiting on tutor feedback |
-| ✅ Recently Completed | Finished within the last 7 days |
+| **Needs Attention** | Overdue, redo, fix & resubmit, need help |
+| **Upcoming** | Not started, in progress |
+| **Discuss with Tutor** | Discuss, demonstrate |
+| **Submitted** | Waiting on tutor feedback |
+| **Recently Completed** | Finished within the last 7 days |
 
-Tasks are ordered by urgency (red ≤ 3 days first), then by grade target (HD → P) within each group. Urgent and discuss tasks include the latest tutor comment inline.
+The companion Chrome extension shows the same tasks live in a popup and keeps your OnTrack session fresh in the background.
 
-## How authentication works
+---
 
-OnTrack tokens are long-lived and survive browser restarts, sleep, or device changes. A token only expires if you explicitly click **Log Out** in OnTrack.
+## Install the extension
 
-> **Tip:** Once subscribed, you don't need to stay logged in. Just don't click Log Out — closing the tab is fine.
+### Option A — Download & load unpacked (no build needed)
 
-If a token does expire, the app emails a re-authentication link and pauses briefs until you re-subscribe.
+1. **Download** the latest `ontrack-brief-extension.zip` from the **[Releases page »](https://github.com/Aarav261/Ontracker/releases/latest)**
+2. **Unzip** it — you'll get a folder named `ontrack-brief-extension`.
+3. Open **`chrome://extensions`** in Chrome.
+4. Toggle **Developer mode** on (top-right).
+5. Click **Load unpacked** and select the unzipped **`ontrack-brief-extension`** folder.
+6. The OnTrack(er) icon appears in your toolbar. Click it and **sign in at [on-tracker.com](https://on-tracker.com)**.
+7. Open OnTrack once so the extension can link your account — your tasks then load in the popup, and your daily brief is scheduled.
 
-## Quick start
+> **Updating:** download the new zip, then on `chrome://extensions` click the **reload ↻** on the OnTrack(er) card (or remove and re-add the folder).
 
-**1. Clone and install dependencies**
-
-```bash
-git clone https://github.com/Aarav261/Ontrack-Brief-.git
-cd Ontrack-Brief-
-pip install -r requirements.txt
-```
-
-**2. Configure email credentials**
+### Option B — Build from source
 
 ```bash
-cp config.ini.template config.ini
+git clone https://github.com/Aarav261/Ontracker.git
+cd Ontracker/extension
+npm install
+npm run build:prod        # production build -> extension/dist
+python ../scripts/package_extension.py   # optional: zip it for sharing
 ```
 
-Edit `config.ini` with your Gmail address and an [App Password](https://myaccount.google.com/apppasswords).
+Then load `extension/dist` via **Load unpacked** (steps 3–7 above). Use `npm run build` instead of `build:prod` for a local-dev build pointed at `localhost`.
 
-**3. Run the web app**
+---
+
+## How it works
+
+**The hard problem:** OnTrack rotates its auth token on *every* API response, so the server can't store one token and reuse it on a schedule. The extension continuously captures the freshest token from your browser and pushes it to the backend, which keeps your brief running while you're away.
+
+- **Identity** is handled by **Clerk** — you sign in once on the web app, and the extension picks up that session (via Clerk's sync host). Your brief is sent to your verified account email.
+- **OnTrack access** is a separate, encrypted token linked to your Clerk account — captured automatically by the extension, never copy-pasted.
+- If your OnTrack session truly expires (you clicked **Log Out** in OnTrack), briefs pause and you get a single re-auth notice. Reopen OnTrack and everything resumes automatically.
+
+> **Tip:** you don't need to stay logged into OnTrack — just don't click *Log Out*. Closing the tab is fine.
+
+For the full design, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+---
+
+## Local development
+
+The backend + Postgres run via Docker; the web app and extension via Vite.
 
 ```bash
-python app.py
+# Backend + database (reads .env.dev)
+docker compose up -d --build
+
+# Web app (Clerk sign-in host)  →  http://localhost:5173
+cd web && npm install && npm run dev
+
+# Extension (dev build)  →  load extension/dist unpacked
+cd extension && npm install && npm run build
 ```
 
-Open `http://localhost:5001`, drag the bookmarklet to your bookmarks bar, then log into OnTrack and click it. Your token is captured automatically and you are redirected back to the setup form.
+Secrets live in `.env.dev` (gitignored). See [`.env.example`](.env.example) for the full list (Clerk keys, Resend, `DATABASE_URL`, `TOKEN_ENCRYPTION_KEY`).
 
-Enter your email and preferred send hour, then select **Subscribe**. A brief is sent within 10 seconds to confirm everything works.
+---
 
-## Project structure
-
-```
-app.py             # Flask app: bookmarklet setup + APScheduler
-builder.py         # Priority scoring and brief assembly
-constants.py       # Grade/status lookups and task-status sets
-db.py              # SQLite persistence for subscribers
-fetcher.py         # OnTrack API calls + TokenExpiredError handling
-mailer.py          # SMTP email delivery + re-auth notification
-renderer.py        # HTML rendering (email-safe table layout)
-templates/
-  index.html       # Setup page with bookmarklet and subscription form
-  success.html     # Post-setup confirmation
-  unsubscribed.html
-test_send_now.py   # Send a brief immediately (no scheduler)
-test_schedule.py   # Fire two briefs 10s apart via APScheduler
-config.ini         # Your credentials — never committed (see .gitignore)
-config.ini.template
-```
-
-## Requirements
-
-- Python 3.10+
-- `pip install -r requirements.txt`
-- A Gmail account with [App Passwords](https://myaccount.google.com/apppasswords) enabled
-
-## Configuration reference
-
-`config.ini`:
-
-```ini
-[email]
-sender       = you@gmail.com
-recipient    = you@gmail.com
-app_password = xxxx xxxx xxxx xxxx
-```
-
-## Unsubscribe
-
-Click the unsubscribe link in any brief email, or visit:
+## Project layout
 
 ```
-http://localhost:5001/unsubscribe/<your-email>
+app.py            Flask app factory + startup
+extensions.py     APScheduler (DB-backed) + rate limiter
+routes/main.py    /link-ontrack, /api/snapshot, /refresh-token, /unsubscribe, webhooks
+core/
+  clerk_auth.py   Clerk session-JWT verification (JWKS)
+  db.py           users table — Postgres (prod) / SQLite (dev)
+  jobs.py         run_brief, refresh_all_tokens, scheduling
+  mailer.py       Resend email delivery
+  crypto.py       OnTrack token encryption at rest
+  ontrack/        rotating-token auth + OnTrack API
+  brief/          categorise + prioritise tasks → HTML email
+web/              Vite + React landing / Clerk sign-in host (on-tracker.com)
+extension/        MV3 Chrome extension (React popup + token-capture scripts)
+scripts/          packaging + maintenance helpers
 ```
+
+## Tech stack
+
+**Backend** Flask · APScheduler · PostgreSQL · PyJWT  ·  **Auth** Clerk  ·  **Email** Resend  ·  **Frontend** React + Vite (web app + MV3 extension)  ·  **Hosting** Railway
