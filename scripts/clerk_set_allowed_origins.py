@@ -4,7 +4,9 @@ Clerk only honours frontend requests from origins on this allowlist. The
 extension runs at a chrome-extension:// origin Clerk doesn't know yet, so the
 popup's synced-session calls are rejected until it's added here.
 
-Reads CLERK_SECRET_KEY from the repo-root .env.dev (never printed). Run:
+Reads CLERK_SECRET_KEY from .env.prod if present, else .env.dev (never printed),
+so it targets whichever Clerk instance that key belongs to — put the prod
+sk_live key in .env.prod to allow-list origins on the production instance. Run:
 
     venv/Scripts/python.exe scripts/clerk_set_allowed_origins.py
 
@@ -29,21 +31,27 @@ ALLOWED_ORIGINS = [
 ]
 
 
-def _secret_key() -> str:
-    env = pathlib.Path(__file__).parent.parent / ".env.dev"
-    text = env.read_text(encoding="utf-8")
-    keys = dict(re.findall(r"^([A-Z_]+)=(.*)$", text, re.M))
-    key = (keys.get("CLERK_SECRET_KEY") or "").strip()
-    if not key:
-        sys.exit("CLERK_SECRET_KEY is not set in .env.dev")
-    return key
+def _secret_key() -> tuple[str, str]:
+    """Return (secret_key, source_filename). Prefer .env.prod over .env.dev."""
+    root = pathlib.Path(__file__).parent.parent
+    for name in (".env.prod", ".env.dev"):
+        path = root / name
+        if not path.exists():
+            continue
+        keys = dict(re.findall(r"^([A-Z_]+)=(.*)$", path.read_text(encoding="utf-8"), re.M))
+        key = (keys.get("CLERK_SECRET_KEY") or "").strip()
+        if key:
+            return key, name
+    sys.exit("CLERK_SECRET_KEY not found in .env.prod or .env.dev")
 
 
 def main() -> None:
+    secret_key, source = _secret_key()
+    print(f"Using CLERK_SECRET_KEY from {source}")
     resp = requests.patch(
         "https://api.clerk.com/v1/instance",
         headers={
-            "Authorization": f"Bearer {_secret_key()}",
+            "Authorization": f"Bearer {secret_key}",
             "Content-Type": "application/json",
         },
         json={"allowed_origins": ALLOWED_ORIGINS},

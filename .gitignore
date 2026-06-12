@@ -1,6 +1,7 @@
 config.ini
 .env
 .env.dev
+.env.prod
 *.log
 # Python
 __pycache__/
