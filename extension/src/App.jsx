@@ -226,11 +226,9 @@ export default function App() {
 
       {activeTab === 'settings' && storageData && isSignedIn && (
         <Settings
-          initialEmail={storageData.subscribed_email || ''}
           initialHour={storageData.brief_hour || '8'}
           initialBriefWeeks={storageData.brief_weeks || '1'}
           initialStripWeeks={storageData.strip_weeks || '1'}
-          subscribedEmail={storageData.subscribed_email}
           onSubscribe={handleSaveSettings}
           onUnsubscribe={handleUnsubscribe}
           onStripWeeksChange={handleStripWeeksChange}
