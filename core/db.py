@@ -270,6 +270,28 @@ def reset_token_fail(email: str) -> None:
         )
 
 
+def reassign_email_by_username(username: str, new_email: str) -> bool:
+    """Move an existing user's subscription to a new email (username is identity).
+
+    Prevents duplicate rows when the same OnTrack account re-registers under a
+    different email: instead of inserting a second row (the table is unique on
+    email, not username), we repoint the existing row. Returns False if new_email
+    already belongs to a *different* username — the move would breach the unique
+    email constraint — so the caller can reject the re-registration.
+    """
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT username FROM users WHERE email = {_P}", (new_email,))
+        row = cur.fetchone()
+        if row and row[0] != username:
+            return False
+        cur.execute(
+            f"UPDATE users SET email = {_P} WHERE username = {_P}",
+            (new_email, username),
+        )
+        return True
+
+
 def set_refresh_token(username: str, refresh_token: str) -> bool:
     """Store the durable refresh_token (encrypted) for a user, keyed by username.
 

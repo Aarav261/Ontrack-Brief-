@@ -13,6 +13,7 @@ from core.db import (
     get_user_by_clerk_id,
     get_user_by_username,
     link_clerk_id_by_email,
+    reassign_email_by_username,
     remove_user,
     reset_token_fail,
     set_refresh_token,
@@ -88,6 +89,25 @@ def _process_user_setup(data: dict) -> tuple[int | None, tuple[dict, int] | None
         return None, ({"ok": False, "error": "OnTrack unreachable, try again"}, 503)
     if not valid:
         return None, ({"ok": False, "error": "invalid token"}, 401)
+
+    # Username is the account identity. If this OnTrack account is already
+    # registered under a different email, move the subscription rather than
+    # inserting a duplicate row (the table is unique on email, not username).
+    existing = get_user_by_username(username)
+    if existing and existing["email"] != email:
+        if not reassign_email_by_username(username, email):
+            return None, (
+                {
+                    "ok": False,
+                    "error": "That email is already registered to another OnTrack account",
+                },
+                409,
+            )
+        log.info(
+            "Re-registration of %s under a new email — moved subscription to %s",
+            username,
+            email,
+        )
 
     user_id = upsert_user(
         tm.base_url,
