@@ -4,10 +4,12 @@ Public API for the rest of the app; internals live in `auth.py` and `fetcher.py`
 """
 
 from .auth import (
+    RefreshTokenError,
     TokenExpiredError,
     TokenManager,
     auth_headers,
     extract_token,
+    mint_auth_token,
     new_session,
 )
 from .fetcher import (
@@ -24,10 +26,12 @@ from .fetcher import (
 )
 
 __all__ = [
+    "RefreshTokenError",
     "TokenExpiredError",
     "TokenManager",
     "auth_headers",
     "extract_token",
+    "mint_auth_token",
     "new_session",
     "fetch_active_projects",
     "fetch_active_projects_direct",

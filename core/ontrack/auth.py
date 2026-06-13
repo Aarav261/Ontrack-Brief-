@@ -40,6 +40,80 @@ class TokenExpiredError(Exception):
     """Raised when the OnTrack API rejects credentials (401/419)."""
 
 
+class RefreshTokenError(Exception):
+    """Raised when minting a fresh auth_token from a refresh_token fails."""
+
+
+def mint_auth_token(
+    base_url: str,
+    refresh_token: str,
+    *,
+    username: str | None = None,
+    session: requests.Session | None = None,
+) -> tuple[str, dict]:
+    """Exchange a durable ``refresh_token`` for a fresh, short-lived ``auth_token``.
+
+    This is the proper fix for overnight expiry: instead of hoarding the rotating
+    auth_token (hours-long life, dies while idle), we hold the long-lived
+    refresh_token cookie OnTrack issues at SSO login and mint a fresh auth_token
+    on demand — e.g. right before each brief.
+
+    Mirrors ontrack-cli's browser flow: POST the refresh_token as a cookie to
+    ``/api/auth/access-token`` with ``delete_auth_token=False`` so minting does
+    NOT invalidate the token the user's browser is currently holding (no rotation
+    race). Returns ``(auth_token, user_dict)``.
+
+    Raises RefreshTokenError if OnTrack rejects the refresh_token or the response
+    is missing an auth_token — callers treat that as "refresh_token expired, ask
+    the user to re-open OnTrack" (the extension will push a fresh one).
+    """
+    base_url = (base_url or "").rstrip("/")
+    http = session or new_session()
+    # The endpoint authenticates off the refresh_token *cookie*, not a header.
+    http.cookies.set("refresh_token", refresh_token, domain=_cookie_domain(base_url))
+    if username:
+        http.cookies.set("username", username, domain=_cookie_domain(base_url))
+
+    try:
+        r = http.post(
+            f"{base_url}/api/auth/access-token",
+            json={"delete_auth_token": False},
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        raise RefreshTokenError(f"OnTrack unreachable while minting token: {exc}") from exc
+
+    if r.status_code in _AUTH_REJECTED:
+        raise RefreshTokenError(
+            f"OnTrack rejected the refresh_token (HTTP {r.status_code}) — likely expired"
+        )
+    if not r.ok:
+        raise RefreshTokenError(f"OnTrack returned HTTP {r.status_code} on token mint")
+
+    payload = r.json() if r.content else {}
+    if not isinstance(payload, dict):
+        raise RefreshTokenError("Unexpected non-object response from token mint")
+
+    auth_token = (
+        payload.get("auth_token")
+        or payload.get("access_token")
+        or payload.get("token")
+    )
+    if not auth_token:
+        raise RefreshTokenError("Token mint succeeded but no auth_token in response")
+
+    user = payload.get("user") if isinstance(payload.get("user"), dict) else {}
+    log.info("Minted fresh auth_token from refresh_token (…%s)", auth_token[-6:])
+    return auth_token, user
+
+
+def _cookie_domain(base_url: str) -> str:
+    """Bare hostname for cookie scoping (no scheme/port)."""
+    from urllib.parse import urlparse
+
+    return urlparse(base_url).hostname or ""
+
+
 def extract_token(
     response: requests.Response, fallback: str | None = None
 ) -> str | None:
