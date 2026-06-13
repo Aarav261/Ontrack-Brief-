@@ -9,6 +9,8 @@ COPY . .
 
 EXPOSE 8000
 
-# Single worker required — APScheduler must run in exactly one process.
+# ONE worker (APScheduler must run in exactly one process), but threaded so the
+# single process serves many requests concurrently — without it the sync worker
+# handles one request at a time and a slow OnTrack call blocks everyone.
 # Shell form so ${PORT} (injected by Railway) expands; falls back to 8000 locally.
-CMD gunicorn --bind 0.0.0.0:${PORT:-8000} --workers 1 --timeout 120 app:app
+CMD gunicorn --bind 0.0.0.0:${PORT:-8000} --workers 1 --worker-class gthread --threads 8 --timeout 120 app:app
