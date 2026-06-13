@@ -47,8 +47,8 @@ class RefreshTokenError(Exception):
 def mint_auth_token(
     base_url: str,
     refresh_token: str,
+    username: str,
     *,
-    username: str | None = None,
     session: requests.Session | None = None,
 ) -> tuple[str, dict]:
     """Exchange a durable ``refresh_token`` for a fresh, short-lived ``auth_token``.
@@ -58,21 +58,24 @@ def mint_auth_token(
     refresh_token cookie OnTrack issues at SSO login and mint a fresh auth_token
     on demand — e.g. right before each brief.
 
-    Mirrors ontrack-cli's browser flow: POST the refresh_token as a cookie to
-    ``/api/auth/access-token`` with ``delete_auth_token=False`` so minting does
-    NOT invalidate the token the user's browser is currently holding (no rotation
-    race). Returns ``(auth_token, user_dict)``.
+    Mirrors ontrack-cli's browser flow: POST the ``refresh_token`` *and*
+    ``username`` as cookies to ``/api/auth/access-token`` with
+    ``delete_auth_token=False`` so minting does NOT invalidate the token the
+    user's browser is currently holding (no rotation race). Both cookies are
+    required — verified against OnTrack: refresh_token alone returns HTTP 201
+    with a ``null`` body. Returns ``(auth_token, user_dict)``.
 
     Raises RefreshTokenError if OnTrack rejects the refresh_token or the response
     is missing an auth_token — callers treat that as "refresh_token expired, ask
     the user to re-open OnTrack" (the extension will push a fresh one).
     """
     base_url = (base_url or "").rstrip("/")
+    domain = _cookie_domain(base_url)
     http = session or new_session()
-    # The endpoint authenticates off the refresh_token *cookie*, not a header.
-    http.cookies.set("refresh_token", refresh_token, domain=_cookie_domain(base_url))
-    if username:
-        http.cookies.set("username", username, domain=_cookie_domain(base_url))
+    # The endpoint authenticates off the cookies, not headers. Both are required:
+    # refresh_token alone yields a 201 with a null body (no user resolved).
+    http.cookies.set("refresh_token", refresh_token, domain=domain)
+    http.cookies.set("username", username, domain=domain)
 
     try:
         r = http.post(
@@ -90,9 +93,14 @@ def mint_auth_token(
     if not r.ok:
         raise RefreshTokenError(f"OnTrack returned HTTP {r.status_code} on token mint")
 
-    payload = r.json() if r.content else {}
+    payload = r.json() if r.content else None
     if not isinstance(payload, dict):
-        raise RefreshTokenError("Unexpected non-object response from token mint")
+        # OnTrack returns HTTP 201 + a literal ``null`` body when the
+        # refresh_token/username pair resolves to no session — i.e. the
+        # refresh_token has expired. Treat as a re-auth signal.
+        raise RefreshTokenError(
+            "OnTrack returned no session for the refresh_token — likely expired"
+        )
 
     auth_token = (
         payload.get("auth_token")
