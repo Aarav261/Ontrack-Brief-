@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom'
 import { SignedIn, SignedOut, UserButton } from '@clerk/clerk-react'
 
+const RELEASES_URL = 'https://github.com/Aarav261/Ontracker/releases/latest'
+
 const FEATURES = [
   {
     n: '01',
@@ -16,6 +18,62 @@ const FEATURES = [
     n: '03',
     title: 'Context included',
     body: 'Every task links straight to OnTrack, with the latest tutor feedback right inside the email.',
+  },
+]
+
+const INSTALL_STEPS = [
+  {
+    n: '1',
+    body: (
+      <>
+        <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer">
+          Download
+        </a>{' '}
+        the latest extension <code>.zip</code> from the releases page.
+      </>
+    ),
+  },
+  {
+    n: '2',
+    body: (
+      <>
+        <strong>Unzip</strong> it — you&rsquo;ll get a folder named{' '}
+        <code>ontrack-brief-extension</code>.
+      </>
+    ),
+  },
+  {
+    n: '3',
+    body: (
+      <>
+        Open <code>chrome://extensions</code> in Chrome.
+      </>
+    ),
+  },
+  {
+    n: '4',
+    body: (
+      <>
+        Turn on <strong>Developer mode</strong> — the toggle in the top-right.
+      </>
+    ),
+  },
+  {
+    n: '5',
+    body: (
+      <>
+        Click <strong>Load unpacked</strong> and select the unzipped folder.
+      </>
+    ),
+  },
+  {
+    n: '6',
+    body: (
+      <>
+        Click the OnTrack(er) icon in your toolbar and <strong>sign in</strong> —
+        your brief is on its way.
+      </>
+    ),
   },
 ]
 
@@ -51,15 +109,18 @@ export default function Landing() {
         <div className="hero-cta">
           <a
             className="btn btn-primary"
-            href="https://github.com/Aarav261/Ontracker/releases/latest"
+            href={RELEASES_URL}
             target="_blank"
             rel="noopener noreferrer"
           >
             Add to Chrome
           </a>
+          <a className="btn btn-ghost" href="#install">
+            How to install
+          </a>
           <SignedOut>
-            <Link className="btn btn-ghost" to="/sign-in">
-              Sign in
+            <Link className="navlink signed-note" to="/sign-in">
+              or sign in
             </Link>
           </SignedOut>
           <SignedIn>
@@ -79,6 +140,41 @@ export default function Landing() {
             <p className="feature-body">{f.body}</p>
           </div>
         ))}
+      </section>
+
+      <section className="install" id="install">
+        <p className="eyebrow">Install in under a minute</p>
+        <h2 className="install-title">
+          Add OnTrack(er) <em>to Chrome</em>.
+        </h2>
+        <p className="install-sub">
+          It&rsquo;s a quick load-unpacked install — no Web Store needed. One time,
+          then it runs quietly in the background.
+        </p>
+
+        <ol className="steps">
+          {INSTALL_STEPS.map((s) => (
+            <li className="step" key={s.n}>
+              <span className="step-num">{s.n}</span>
+              <span className="step-body">{s.body}</span>
+            </li>
+          ))}
+        </ol>
+
+        <div className="install-cta">
+          <a
+            className="btn btn-primary"
+            href={RELEASES_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Download the extension
+          </a>
+          <span className="install-note">
+            Updating later? Download the new zip, then hit reload&nbsp;&#8635; on the
+            OnTrack(er) card in <code>chrome://extensions</code>.
+          </span>
+        </div>
       </section>
 
       <footer className="site-footer">

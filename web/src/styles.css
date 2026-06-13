@@ -192,6 +192,113 @@ body {
   margin: 0;
 }
 
+/* ── Install ─────────────────────────────────────────────── */
+.install {
+  border-top: 1px solid var(--line);
+  padding: 64px 0 24px;
+  max-width: 720px;
+}
+
+.install-title {
+  font-size: 40px;
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: -1px;
+  margin: 0 0 16px;
+}
+
+.install-title em {
+  font-style: italic;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.install-sub {
+  font-size: 18px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 0 0 40px;
+  max-width: 560px;
+}
+
+.steps {
+  list-style: none;
+  margin: 0 0 40px;
+  padding: 0;
+  counter-reset: step;
+}
+
+.step {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.step:last-child {
+  border-bottom: none;
+}
+
+.step-num {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 700;
+  font-style: italic;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+
+.step-body {
+  font-size: 17px;
+  line-height: 1.55;
+  color: var(--ink);
+  padding-top: 4px;
+}
+
+.step-body a {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.step-body a:hover {
+  text-decoration: underline;
+}
+
+.step-body code,
+.install-note code {
+  font-family: 'SFMono-Regular', ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.86em;
+  background: #f1f0ec;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1.5px 6px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.install-cta {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.install-note {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--faint);
+  max-width: 360px;
+}
+
 /* ── Footer ──────────────────────────────────────────────── */
 .site-footer {
   display: flex;
@@ -249,5 +356,12 @@ body {
   }
   .brand {
     font-size: 28px;
+  }
+  .install-title {
+    font-size: 30px;
+    letter-spacing: -0.6px;
+  }
+  .install-sub {
+    font-size: 16px;
   }
 }
