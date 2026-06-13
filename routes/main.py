@@ -1,5 +1,6 @@
 import logging
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 
 import requests
@@ -29,6 +30,7 @@ from core.ontrack import (
     fetch_last_feedback_direct,
     fetch_tasks_direct,
     mint_auth_token,
+    new_session,
 )
 from extensions import limiter, scheduler
 
@@ -419,20 +421,36 @@ def api_snapshot():
             {"offset": offset, "date": iso, "label": d.strftime("%a"), "tasks": []}
         )
 
-    for project in projects:
-        if len(feedback_entries) >= 3 or feedback_checks >= 8:
-            break
-        project_id = project["id"]
-        unit_code = project["unit"]["code"]
+    # Fetch every project's tasks concurrently — they're independent I/O. Each
+    # worker uses its own session and the minted token read-only (no rotation
+    # capture needed mid-snapshot), so nothing mutable is shared across threads.
+    def _load_tasks(project: dict) -> tuple[dict, list | None]:
         try:
             tasks = fetch_tasks_direct(
-                tm.base_url, tm.token, tm.username, project_id, session=tm.session
+                tm.base_url,
+                tm.token,
+                tm.username,
+                project["id"],
+                session=new_session(),
             )
+            return project, tasks
         except Exception as exc:
             log.warning(
-                "api_snapshot: fetch_tasks failed project %s: %s", project_id, exc
+                "api_snapshot: fetch_tasks failed project %s: %s", project["id"], exc
             )
+            return project, None
+
+    with ThreadPoolExecutor(max_workers=min(8, len(projects) or 1)) as pool:
+        project_tasks = list(pool.map(_load_tasks, projects))
+
+    # Build the strip from every project (preserving order). Now that all tasks
+    # are fetched up front, the strip is complete — it no longer truncates once
+    # the feedback caps are hit (the old sequential loop broke out early).
+    for project, tasks in project_tasks:
+        if not tasks:
             continue
+        project_id = project["id"]
+        unit_code = project["unit"]["code"]
         for task in tasks:
             if task.get("status") not in ACTIVE:
                 continue
@@ -450,14 +468,20 @@ def api_snapshot():
                     "url": f"{base_url}/projects/{project_id}/dashboard/{abbrev}",
                 }
             )
-        if len(feedback_entries) >= 3:
+
+    # Gather a few recent tutor feedback notes (sequential + capped). These extra
+    # /comments calls are the next thing to parallelise — see FUTURE_IDEAS.
+    for project, tasks in project_tasks:
+        if len(feedback_entries) >= 3 or feedback_checks >= 8:
+            break
+        if not tasks:
             continue
+        project_id = project["id"]
+        unit_code = project["unit"]["code"]
         for task in tasks:
             if task.get("status") not in FEEDBACK_STATUSES:
                 continue
-            if len(feedback_entries) >= 3:
-                break
-            if feedback_checks >= 8:
+            if len(feedback_entries) >= 3 or feedback_checks >= 8:
                 break
             feedback_checks += 1
             text = fetch_last_feedback_direct(
