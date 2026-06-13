@@ -21,6 +21,7 @@ docker-compose.yml
 # Node / extension
 node_modules/
 dist/
+dist-local/
 .vite/
 
 # Data & secrets
