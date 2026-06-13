@@ -22,11 +22,13 @@ from core.db import (
 )
 from core.jobs import run_brief, schedule_brief
 from core.ontrack import (
+    RefreshTokenError,
     TokenManager,
     TokenExpiredError,
     fetch_active_projects_direct,
     fetch_last_feedback_direct,
     fetch_tasks_direct,
+    mint_auth_token,
 )
 from extensions import limiter, scheduler
 
@@ -356,18 +358,36 @@ def api_snapshot():
     # Dedicated TokenManager so token capture doesn't interfere with brief jobs.
     tm = TokenManager(base_url, username, auth_token)
 
-    try:
-        valid = tm.validate()
-    except Exception as exc:
-        log.warning("api_snapshot: OnTrack unreachable for %s: %s", username, exc)
-        return {"error": "OnTrack unreachable"}, 503
-
-    if not valid:
-        log.warning(
-            "api_snapshot: token rejected by OnTrack for %s — open OnTrack to refresh",
-            username,
-        )
-        return _stale_snapshot_response(db_user)
+    # Prefer minting a fresh auth_token from the durable refresh_token — the same
+    # path the brief uses. The scraped auth_token goes stale between OnTrack visits,
+    # which is why the popup kept showing "session expired"; minting fixes that.
+    # Only an expired refresh_token is a real "open OnTrack to refresh" signal.
+    refresh_token = db_user.get("refresh_token")
+    if refresh_token:
+        try:
+            tm.token, _ = mint_auth_token(
+                base_url, refresh_token, username, session=tm.session
+            )
+            tm.persist(db_user)  # keep the stored token warm
+        except RefreshTokenError:
+            log.info("api_snapshot: refresh_token expired for %s", username)
+            return _stale_snapshot_response(db_user)
+        except Exception as exc:
+            log.warning("api_snapshot: OnTrack unreachable minting for %s: %s", username, exc)
+            return {"error": "OnTrack unreachable"}, 503
+    else:
+        # Legacy users with no refresh_token yet: validate the scraped token.
+        try:
+            valid = tm.validate()
+        except Exception as exc:
+            log.warning("api_snapshot: OnTrack unreachable for %s: %s", username, exc)
+            return {"error": "OnTrack unreachable"}, 503
+        if not valid:
+            log.warning(
+                "api_snapshot: token rejected by OnTrack for %s — open OnTrack to refresh",
+                username,
+            )
+            return _stale_snapshot_response(db_user)
 
     try:
         projects, tm.token = fetch_active_projects_direct(
