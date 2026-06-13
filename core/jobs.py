@@ -1,6 +1,7 @@
 import logging
 import os
 from datetime import date
+from zoneinfo import ZoneInfo
 
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.triggers.cron import CronTrigger
@@ -26,6 +27,11 @@ from extensions import scheduler
 
 log = logging.getLogger(__name__)
 APP_URL = os.environ.get("APP_URL", "http://localhost:8000/")
+# brief_hour is the user's intended *local* hour. OnTrack is Deakin, so briefs
+# run on Melbourne time (DST-aware) — without this the container's UTC clock
+# would fire an "8am" brief at 6pm Melbourne. (tzdata is pinned in requirements
+# so the zone resolves on the slim Docker image.)
+_BRIEF_TZ = ZoneInfo("Australia/Melbourne")
 _PENDING_WINDOW_DAYS = 14
 _THIS_WEEK_DAYS = 6
 # Consecutive failed token checks before treating a token as truly expired.
@@ -147,7 +153,9 @@ def _remove_retired_jobs() -> None:
 
 def schedule_brief(user_id: int, brief_hour: int) -> None:
     job_id = f"brief_{user_id}"
-    trigger = CronTrigger(day_of_week="mon-fri", hour=brief_hour, minute=0)
+    trigger = CronTrigger(
+        day_of_week="mon-fri", hour=brief_hour, minute=0, timezone=_BRIEF_TZ
+    )
     if scheduler.get_job(job_id):
         scheduler.reschedule_job(job_id, trigger=trigger)
     else:
