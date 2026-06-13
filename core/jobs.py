@@ -15,7 +15,7 @@ from core.db import (
     mark_token_invalid,
     reset_token_fail,
 )
-from core.mailer import send_brief_to, send_reauth_email
+from core.mailer import send_brief_to, send_briefs_enabled_email, send_reauth_email
 from core.ontrack import (
     RefreshTokenError,
     TokenManager,
@@ -48,7 +48,14 @@ def _pause_and_reauth(user_id: int, email: str) -> None:
     send_reauth_email(email, APP_URL)
 
 
-def run_brief(user_id: int) -> None:
+def run_brief(user_id: int, *, confirm_if_empty: bool = False) -> None:
+    """Build and email a user's brief.
+
+    ``confirm_if_empty`` is set only by an explicit "Enable email briefs" action:
+    when the user has no active units (nothing to brief), send a one-off
+    confirmation email instead of returning silently — so the deliberate click
+    gets feedback. The daily cron leaves it False, so it never spams an empty brief.
+    """
     user = get_user_by_id(user_id)
     if not user:
         log.error("run_brief: no user found for id=%s", user_id)
@@ -88,6 +95,10 @@ def run_brief(user_id: int) -> None:
         )
         tm.persist(user)  # save the token rotated by the projects call
         if not projects:
+            if confirm_if_empty:
+                log.info("No active units for %s — sending briefs-enabled confirmation", email)
+                send_briefs_enabled_email(email)
+                reset_token_fail(email)  # mint/fetch worked — session is alive
             return
         brief = build_brief_direct(
             tm.base_url,

@@ -49,6 +49,23 @@ def send_brief_to(html: str, recipient: str, today: date, due_this_week: int) ->
     return _send(html, subject, recipient, kind="Brief")
 
 
+def send_briefs_enabled_email(recipient: str) -> bool:
+    """Confirm briefs are on when the user enables them but has no active units.
+
+    Sent only on an explicit enable (not the daily cron), so the user gets
+    feedback instead of silence when there's currently nothing to brief.
+    """
+    html = """<!DOCTYPE html>
+<html><body style="font-family:sans-serif;max-width:560px;margin:32px auto;color:#333">
+  <h2>You&rsquo;re all set &#x2705;</h2>
+  <p>Your OnTrack Brief is enabled. You don&rsquo;t have any active units right now,
+     so there&rsquo;s nothing to brief yet &mdash; you&rsquo;ll start getting a brief each
+     weekday morning once a new trimester begins.</p>
+</body></html>"""
+    subject = "OnTrack Brief enabled"
+    return _send(html, subject, recipient, kind="Briefs-enabled")
+
+
 def send_reauth_email(recipient: str, app_url: str) -> bool:
     html = """<!DOCTYPE html>
 <html><body style="font-family:sans-serif;max-width:560px;margin:32px auto;color:#333">

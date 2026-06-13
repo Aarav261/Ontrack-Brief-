@@ -184,6 +184,9 @@ export default function App() {
             auth_token: stored.auth_token,
             brief_hour: parseInt(hour, 10),
             brief_days: parseInt(briefWeeks, 10) * 7,
+            // Deliberate "Enable email briefs" click — send one now even if the
+            // user is already linked (the auto re-link on open omits this).
+            send_brief_now: true,
           },
         })
           .then(() => {
