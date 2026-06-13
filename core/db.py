@@ -14,9 +14,12 @@ log = logging.getLogger(__name__)
 
 
 def _decrypt_row(row: dict | None) -> dict | None:
-    """Decrypt the at-rest auth_token on a user row read from the DB."""
-    if row and row.get("auth_token") is not None:
-        row["auth_token"] = _decrypt(row["auth_token"])
+    """Decrypt the at-rest credentials (auth_token, refresh_token) on a user row."""
+    if row:
+        if row.get("auth_token") is not None:
+            row["auth_token"] = _decrypt(row["auth_token"])
+        if row.get("refresh_token") is not None:
+            row["refresh_token"] = _decrypt(row["refresh_token"])
     return row
 
 
@@ -69,6 +72,7 @@ def init_db() -> None:
                     base_url                TEXT NOT NULL,
                     username                TEXT NOT NULL,
                     auth_token              TEXT NOT NULL,
+                    refresh_token           TEXT,
                     email                   TEXT NOT NULL UNIQUE,
                     clerk_user_id           TEXT,
                     brief_hour              INTEGER NOT NULL DEFAULT 8,
@@ -88,6 +92,7 @@ def init_db() -> None:
                 ("last_snapshot", "TEXT"),
                 ("clerk_user_id", "TEXT"),
                 ("token_fail_count", "INTEGER NOT NULL DEFAULT 0"),
+                ("refresh_token", "TEXT"),
             ]:
                 cur.execute(f"""
                     DO $$
@@ -112,6 +117,7 @@ def init_db() -> None:
                     base_url                TEXT NOT NULL,
                     username                TEXT NOT NULL,
                     auth_token              TEXT NOT NULL,
+                    refresh_token           TEXT,
                     email                   TEXT NOT NULL UNIQUE,
                     clerk_user_id           TEXT,
                     brief_hour              INTEGER NOT NULL DEFAULT 8,
@@ -132,6 +138,7 @@ def init_db() -> None:
                 ("last_snapshot", "TEXT"),
                 ("clerk_user_id", "TEXT"),
                 ("token_fail_count", "INTEGER NOT NULL DEFAULT 0"),
+                ("refresh_token", "TEXT"),
             ]:
                 if col not in cols:
                     cur.execute(f"ALTER TABLE users ADD COLUMN {col} {typedef}")
@@ -261,6 +268,22 @@ def reset_token_fail(email: str) -> None:
         cur.execute(
             f"UPDATE users SET token_fail_count = 0 WHERE email = {_P}", (email,)
         )
+
+
+def set_refresh_token(username: str, refresh_token: str) -> bool:
+    """Store the durable refresh_token (encrypted) for a user, keyed by username.
+
+    The extension pushes this from the browser; the brief mints fresh auth_tokens
+    from it. Returns True if a row was updated, False if no such user exists.
+    """
+    encrypted = _encrypt(refresh_token)
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"UPDATE users SET refresh_token = {_P} WHERE username = {_P}",
+            (encrypted, username),
+        )
+        return cur.rowcount > 0
 
 
 def get_all_users() -> list[dict]:
