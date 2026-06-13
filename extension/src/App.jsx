@@ -42,18 +42,26 @@ export default function App() {
   const loadSnapshot = useCallback(
     (username, baseUrl, force = false, numDays = 7) => {
       snapshotAuthRef.current = { username, baseUrl, days: numDays }
-      setStripLoading(true)
-      setDays(null)
-      setFeedback([])
 
       chrome.storage.local.get([SNAPSHOT_KEY], (stored) => {
         const cached = stored[SNAPSHOT_KEY]
-        if (!force && cached?.data && Date.now() - cached.ts < SNAPSHOT_TTL_MS) {
+        const hasCache = !!cached?.data
+        const fresh = hasCache && Date.now() - cached.ts < SNAPSHOT_TTL_MS
+
+        if (hasCache) {
+          // Stale-while-revalidate: paint cached data instantly (any age), no
+          // blocking spinner. Skip the network entirely while still fresh.
           setDays(cached.data.days)
           setFeedback(cached.data.feedback || [])
           setStripLoading(false)
           setFooterSync(syncLabel(cached.ts))
-          return
+          if (!force && fresh) return
+          setFooterSync('Refreshing…') // background revalidate cue
+        } else {
+          // First load on this device — nothing to show yet.
+          setStripLoading(true)
+          setDays(null)
+          setFeedback([])
         }
 
         // Server resolves the user from the verified Clerk JWT; the body no
@@ -76,14 +84,18 @@ export default function App() {
             setFooterSync(data.is_stale ? 'Stale Data' : syncLabel(ts))
           })
           .catch((err) => {
+            // A failed *background* revalidate keeps the cached data on screen;
+            // only surface actionable states, and stay quiet on generic errors
+            // when we already have something to show.
             if (err?.data?.hint === 'open_ontrack') {
               setStatus('warning', 'Session expired — open OnTrack to refresh')
             } else if (err?.data?.error === 'not_linked') {
               setStatus('warning', 'Open OnTrack so we can link your account')
-            } else {
+            } else if (!hasCache) {
               setStatus('warning', 'Could not load tasks — is the server running?')
             }
-            setFeedback([])
+            setFooterSync(hasCache ? syncLabel(cached.ts) : '')
+            if (!hasCache) setFeedback([])
           })
           .finally(() => setStripLoading(false))
       })
