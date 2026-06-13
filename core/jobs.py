@@ -1,9 +1,9 @@
 import logging
 import os
-from datetime import date, datetime, timedelta
+from datetime import date
 
+from apscheduler.jobstores.base import JobLookupError
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.date import DateTrigger
 
 from core.brief import build_brief_direct, pending_due_entries, render_html
 from core.db import (
@@ -120,65 +120,29 @@ def run_brief(user_id: int) -> None:
         log.error("Brief generation failed for %s: %s", email, exc, exc_info=True)
 
 
+# The 20-min token-refresh poll has been retired. run_brief now mints a fresh
+# auth_token on demand (mint_auth_token), so there's no need to chase the rotating
+# token every 20 minutes — and the poll's strike logic was wrongly marking stale
+# rotating tokens invalid and *removing the brief jobs*, silently stopping briefs.
 def refresh_all_tokens() -> None:
-    """Single consolidated job — reads fresh from DB every 20 min for all users.
+    """Retired no-op. Kept as a resolvable reference so a `token_refresh` job
+    pickled into the persistent jobstore by an older deploy loads without error
+    and unschedules itself, instead of raising on an unresolvable function."""
+    try:
+        scheduler.remove_job("token_refresh")
+        log.info("Retired token_refresh poll fired — removed it from the jobstore")
+    except JobLookupError:
+        pass
 
-    For users with a durable refresh_token, liveness is "can we still mint?" — we
-    mint a fresh auth_token (and persist it) so the credential stays warm and an
-    expired refresh_token is caught before the morning brief. Legacy users without
-    a refresh_token fall back to validating their rotating auth_token.
-    """
-    for user in get_all_users():
-        # Already invalid: briefs are paused and the one-time re-auth email was
-        # already sent. Skip until the extension pushes a fresh token (which
-        # restores token_valid=1), so we don't re-email every cycle.
-        if not user.get("token_valid", 1):
-            continue
 
-        tm = TokenManager.for_user(user)
-        refresh_token = user.get("refresh_token")
+def _remove_retired_jobs() -> None:
+    """Drop retired poll jobs left in the persistent jobstore by older deploys."""
+    for job_id in ("token_refresh", "token_refresh_startup"):
         try:
-            if refresh_token:
-                # Mint, not validate: the stored auth_token may be legitimately
-                # stale (e.g. overnight) — that's no longer a failure signal.
-                tm.token, _ = mint_auth_token(
-                    tm.base_url, refresh_token, tm.username, session=tm.session
-                )
-                valid = True
-            else:
-                valid = tm.validate()
-        except RefreshTokenError as exc:
-            valid = False  # refresh_token rejected — fall through to strike logic
-            log.debug("Mint failed for %s: %s", user["username"], exc)
-        except Exception as exc:
-            log.warning(
-                "OnTrack unreachable for %s (service may be down): %s",
-                user["username"],
-                exc,
-            )
-            continue
-
-        if not valid:
-            strikes = bump_token_fail(user["email"])
-            if strikes < _FAIL_THRESHOLD:
-                log.info(
-                    "Token check failed for %s (strike %d/%d) — likely a rotation "
-                    "race (browser/extension rotated it), not pausing",
-                    user["username"],
-                    strikes,
-                    _FAIL_THRESHOLD,
-                )
-                continue
-            log.warning(
-                "Token for %s failed %d consecutive checks — pausing briefs, "
-                "waiting for extension to push fresh token",
-                user["username"],
-                strikes,
-            )
-            _pause_and_reauth(user["id"], user["email"])
-            continue
-        reset_token_fail(user["email"])  # valid check — clear any accumulated strikes
-        tm.persist(user)
+            scheduler.remove_job(job_id)
+            log.info("Removed retired job %s from the jobstore", job_id)
+        except JobLookupError:
+            pass
 
 
 def schedule_brief(user_id: int, brief_hour: int) -> None:
@@ -193,14 +157,6 @@ def schedule_brief(user_id: int, brief_hour: int) -> None:
             args=[user_id],
             id=job_id,
             misfire_grace_time=3600,
-            replace_existing=True,
-        )
-    if not scheduler.get_job("token_refresh"):
-        scheduler.add_job(
-            refresh_all_tokens,
-            CronTrigger(minute="*/20"),
-            id="token_refresh",
-            misfire_grace_time=600,
             replace_existing=True,
         )
 
@@ -223,9 +179,5 @@ def startup() -> None:
 
     scheduler.start()
 
-    scheduler.add_job(
-        refresh_all_tokens,
-        DateTrigger(run_date=datetime.now() + timedelta(seconds=5)),
-        id="token_refresh_startup",
-        replace_existing=True,
-    )
+    # Evict the retired 20-min token-refresh poll if an older deploy persisted it.
+    _remove_retired_jobs()
