@@ -15,6 +15,7 @@ from core.db import (
     link_clerk_id_by_email,
     remove_user,
     reset_token_fail,
+    set_refresh_token,
     upsert_user,
     update_user_snapshot,
 )
@@ -184,6 +185,49 @@ def refresh_token():
             schedule_brief(user["id"], user["brief_hour"])
         else:
             log.info("Token refreshed via extension for %s", username)
+
+    return {"ok": True}
+
+
+@main_bp.route("/refresh-credential", methods=["POST"])
+@limiter.limit("30 per minute")
+def refresh_credential():
+    """Called by the extension to push the browser's durable refresh_token cookie.
+
+    Unlike the rotating auth_token, this lets the server mint a fresh auth_token
+    on demand (right before each brief), so the session survives overnight idle.
+    """
+    data = request.get_json(silent=True) or {}
+    username = data.get("username", "").strip()
+    refresh_token = data.get("refresh_token", "").strip()
+    if not username or not refresh_token:
+        return {"ok": False, "error": "missing fields"}, 400
+
+    user = get_user_by_username(username)
+    if not user:
+        return {"ok": False, "error": "not subscribed"}, 404
+
+    if not set_refresh_token(username, refresh_token):
+        return {"ok": False, "error": "not subscribed"}, 404
+
+    # A fresh refresh_token proves the user is re-authenticated — clear strikes and,
+    # if briefs were paused on a dead token, restore and re-schedule them.
+    reset_token_fail(user["email"])
+    if not user["token_valid"]:
+        upsert_user(
+            user["base_url"],
+            username,
+            user["auth_token"],
+            user["email"],
+            user["brief_hour"],
+            token_valid=1,
+            recently_completed_days=user.get("recently_completed_days", 7),
+            max_todo_tasks=user.get("max_todo_tasks", 10),
+        )
+        log.info("Refresh token received for %s — restoring paused brief", username)
+        schedule_brief(user["id"], user["brief_hour"])
+    else:
+        log.info("Refresh token stored for %s", username)
 
     return {"ok": True}
 
