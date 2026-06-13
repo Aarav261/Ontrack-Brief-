@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import date
+from html import escape
 
 from core.email_theme import render_email
 
@@ -14,8 +15,19 @@ log = logging.getLogger(__name__)
 _DRY_RUN = os.environ.get("RESEND_DRY_RUN", "false").lower() == "true"
 
 
-def _send(html: str, subject: str, recipient: str, *, kind: str) -> bool:
-    """Deliver one HTML email via Resend. Returns True on success."""
+def _send(
+    html: str,
+    subject: str,
+    recipient: str,
+    *,
+    kind: str,
+    reply_to: str | None = None,
+) -> bool:
+    """Deliver one HTML email via Resend. Returns True on success.
+
+    ``reply_to`` sets the Reply-To header — used by issue reports so a reply lands
+    in the reporter's inbox rather than the no-reply sender.
+    """
     sender = os.environ.get("RESEND_FROM_EMAIL", "onboarding@resend.dev")
 
     if _DRY_RUN:
@@ -29,15 +41,16 @@ def _send(html: str, subject: str, recipient: str, *, kind: str) -> bool:
     import resend
 
     resend.api_key = os.environ["RESEND_API_KEY"]
+    payload = {
+        "from": sender,
+        "to": [recipient],
+        "subject": subject,
+        "html": html,
+    }
+    if reply_to:
+        payload["reply_to"] = reply_to
     try:
-        result = resend.Emails.send(
-            {
-                "from": sender,
-                "to": [recipient],
-                "subject": subject,
-                "html": html,
-            }
-        )
+        result = resend.Emails.send(payload)
         log.info("%s email sent to %s (id %s)", kind, recipient, result.get("id"))
         return True
     except Exception as exc:
@@ -82,3 +95,48 @@ def send_reauth_email(recipient: str, app_url: str) -> bool:
     html = render_email("Re-authentication needed", body)
     subject = "OnTrack Brief — Re-authentication needed"
     return _send(html, subject, recipient, kind="Re-auth")
+
+
+def send_issue_report(
+    description: str, reporter_email: str, *, context: dict | None = None
+) -> bool:
+    """Email a user-submitted issue/feedback to the admin inbox.
+
+    Recipient is ``ISSUE_REPORT_EMAIL`` (env). The user's text is HTML-escaped
+    before embedding, Reply-To is the reporter so admins can respond directly,
+    and ``context`` (extension version, username, …) is included for triage.
+    """
+    admin = os.environ.get("ISSUE_REPORT_EMAIL", "").strip()
+    if not admin:
+        log.error("ISSUE_REPORT_EMAIL not set — cannot deliver issue report")
+        return False
+
+    safe_desc = escape(description.strip()).replace("\n", "<br>")
+    meta = ""
+    if context:
+        rows = "".join(
+            f'<tr>'
+            f'<td style="padding:4px 14px 4px 0;font-size:12px;text-transform:uppercase;'
+            f'letter-spacing:.6px;color:#9a9a9a;white-space:nowrap;vertical-align:top">{escape(str(k))}</td>'
+            f'<td style="padding:4px 0;font-size:13px;color:#3a3a3a">{escape(str(v))}</td>'
+            f'</tr>'
+            for k, v in context.items()
+            if v
+        )
+        if rows:
+            meta = (
+                '<table cellpadding="0" cellspacing="0" '
+                'style="margin-top:18px;border-top:1px solid #ececec;padding-top:14px;width:100%">'
+                f"{rows}</table>"
+            )
+
+    body = f"""
+<p style="margin:0 0 12px;font-size:13px;color:#9a9a9a">
+  From <strong style="color:#3a3a3a">{escape(reporter_email)}</strong>
+</p>
+<div style="font-size:15px;line-height:1.6;color:#1a1a1a;white-space:pre-wrap">{safe_desc}</div>
+{meta}"""
+
+    html = render_email("New issue report", body, eyebrow="Issue report", with_quote=False)
+    subject = f"OnTrack Brief — issue from {reporter_email}"
+    return _send(html, subject, admin, kind="Issue", reply_to=reporter_email)

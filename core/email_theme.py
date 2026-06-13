@@ -41,12 +41,21 @@ def _quote_footer() -> str:
 </td>"""
 
 
-def render_email(heading: str, inner_html: str, *, eyebrow: str = "OnTrack Brief") -> str:
+def render_email(
+    heading: str,
+    inner_html: str,
+    *,
+    eyebrow: str = "OnTrack Brief",
+    with_quote: bool = True,
+) -> str:
     """Wrap ``inner_html`` in the shared shell with a header and a quote footer.
 
     ``heading`` is the section title (accent-coloured); ``eyebrow`` is the small
     uppercase wordmark above it. ``inner_html`` is trusted, pre-escaped content.
+    Set ``with_quote=False`` for transactional/admin mail where the inspirational
+    quote footer would be out of place (e.g. issue reports).
     """
+    quote_row = f"<tr>{_quote_footer()}</tr>" if with_quote else ""
     return f"""<!DOCTYPE html>
 <html lang="en" xmlns="http://www.w3.org/1999/xhtml">
 <head>
@@ -84,7 +93,7 @@ def render_email(heading: str, inner_html: str, *, eyebrow: str = "OnTrack Brief
             <tr><td style="padding:22px 32px 26px">
               {inner_html}
             </td></tr>
-            <tr>{_quote_footer()}</tr>
+            {quote_row}
           </table>
         </td></tr>
         <tr><td align="center" style="padding:18px 0 0">

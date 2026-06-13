@@ -6,6 +6,7 @@ import NoAuth from './components/NoAuth'
 import SignInCTA from './components/SignInCTA'
 import SnapshotView from './components/SnapshotView'
 import Settings from './components/Settings'
+import ReportIssue from './components/ReportIssue'
 import Footer from './components/Footer'
 import { api } from './lib/api'
 import { syncLabel } from './utils/time'
@@ -215,6 +216,13 @@ export default function App() {
       setStatus('warning', 'Unsubscribed — your daily briefs are paused.')
     })
 
+  const handleReportIssue = (description) =>
+    api('/api/issues', {
+      method: 'POST',
+      getToken,
+      body: { description, version: chrome.runtime.getManifest().version },
+    })
+
   const username = storageData?.username || ''
 
   return (
@@ -223,23 +231,19 @@ export default function App() {
         onSettings={() =>
           setActiveTab((t) => (t === 'settings' ? 'main' : 'settings'))
         }
+        onReport={() =>
+          setActiveTab((t) => (t === 'report' ? 'main' : 'report'))
+        }
         onRefresh={handleRefresh}
         settingsActive={activeTab === 'settings'}
+        reportActive={activeTab === 'report'}
       />
 
       {statusType !== 'ok' && <StatusPill type={statusType} text={statusText} />}
 
-      {activeTab === 'main' && (
-        <>
-          {view === 'signed-out' && <SignInCTA />}
-          {view === 'no-ontrack' && <NoAuth />}
-          {view === 'snapshot' && (
-            <SnapshotView days={days} loading={stripLoading} feedback={feedback} />
-          )}
-        </>
-      )}
-
-      {activeTab === 'settings' && storageData && isSignedIn && (
+      {/* Settings & feedback panels require a signed-in session; otherwise fall
+          back to the main view (which surfaces the sign-in CTA). */}
+      {activeTab === 'settings' && storageData && isSignedIn ? (
         <Settings
           initialHour={storageData.brief_hour || '8'}
           initialBriefWeeks={storageData.brief_weeks || '1'}
@@ -249,6 +253,16 @@ export default function App() {
           onStripWeeksChange={handleStripWeeksChange}
           onBriefWeeksChange={handleBriefWeeksChange}
         />
+      ) : activeTab === 'report' && isSignedIn ? (
+        <ReportIssue onSubmit={handleReportIssue} />
+      ) : (
+        <>
+          {view === 'signed-out' && <SignInCTA />}
+          {view === 'no-ontrack' && <NoAuth />}
+          {view === 'snapshot' && (
+            <SnapshotView days={days} loading={stripLoading} feedback={feedback} />
+          )}
+        </>
       )}
 
       <Footer footerUser={username} footerSync={footerSync} />

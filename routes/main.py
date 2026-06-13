@@ -22,6 +22,7 @@ from core.db import (
     update_user_snapshot,
 )
 from core.jobs import run_brief, schedule_brief
+from core.mailer import send_issue_report
 from core.ontrack import (
     RefreshTokenError,
     TokenManager,
@@ -522,6 +523,40 @@ def api_snapshot():
         update_user_snapshot(username, json.dumps(stored))
 
     return response_data
+
+
+@main_bp.route("/api/issues", methods=["POST"])
+@limiter.limit("5 per hour")
+@require_clerk_auth
+def report_issue():
+    """Accept a user-submitted issue/feedback and email it to the admin inbox.
+
+    Identity is the verified Clerk session (we email that address, never a
+    body-supplied one). The description is escaped server-side before it lands in
+    the HTML email.
+    """
+    reporter_email = (g.clerk_claims or {}).get("email")
+    if not reporter_email:
+        return {"ok": False, "error": "no_email_claim"}, 400
+
+    data = request.get_json(silent=True) or {}
+    description = (data.get("description") or "").strip()
+    if not description:
+        return {"ok": False, "error": "empty"}, 400
+    if len(description) > 2000:
+        description = description[:2000]
+
+    # Best-effort triage context — the username only exists if OnTrack is linked.
+    db_user = get_user_by_clerk_id(g.clerk_user_id)
+    context = {
+        "Extension": (data.get("version") or "").strip() or "unknown",
+        "OnTrack user": db_user["username"] if db_user else "(not linked)",
+    }
+
+    if not send_issue_report(description, reporter_email, context=context):
+        return {"ok": False, "error": "delivery_failed"}, 502
+    log.info("Issue report submitted by %s", reporter_email)
+    return {"ok": True}
 
 
 @main_bp.route("/unsubscribe/<path:email>")
