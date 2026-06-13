@@ -6,6 +6,8 @@ import logging
 import os
 from datetime import date
 
+from core.email_theme import render_email
+
 log = logging.getLogger(__name__)
 
 # When true, skip the actual API call and just log — useful for local dev.
@@ -55,26 +57,28 @@ def send_briefs_enabled_email(recipient: str) -> bool:
     Sent only on an explicit enable (not the daily cron), so the user gets
     feedback instead of silence when there's currently nothing to brief.
     """
-    html = """<!DOCTYPE html>
-<html><body style="font-family:sans-serif;max-width:560px;margin:32px auto;color:#333">
-  <h2>You&rsquo;re all set &#x2705;</h2>
-  <p>Your OnTrack Brief is enabled. You don&rsquo;t have any active units right now,
-     so there&rsquo;s nothing to brief yet &mdash; you&rsquo;ll start getting a brief each
-     weekday morning once a new trimester begins.</p>
-</body></html>"""
+    body = """
+<p style="margin:0;font-size:15px;line-height:1.65;color:#3a3a3a">
+  Your OnTrack Brief is enabled. You don&rsquo;t have any active units right now,
+  so there&rsquo;s nothing to brief yet &mdash; you&rsquo;ll start getting a brief each
+  weekday morning once a new trimester begins.
+</p>"""
+    html = render_email("You're all set", body)
     subject = "OnTrack Brief enabled"
     return _send(html, subject, recipient, kind="Briefs-enabled")
 
 
 def send_reauth_email(recipient: str, app_url: str) -> bool:
-    html = """<!DOCTYPE html>
-<html><body style="font-family:sans-serif;max-width:560px;margin:32px auto;color:#333">
-  <h2 style="color:#c0392b">&#x26A0; OnTrack Brief — Re-authentication needed</h2>
-  <p>Your OnTrack session has expired. To continue receiving your daily briefs,
-     open the <strong>OnTrack Brief</strong> Chrome extension and log into OnTrack —
-     your token will refresh automatically.</p>
-  <p style="color:#888;font-size:12px">Tip: you don&rsquo;t need to stay logged in to
-     OnTrack &mdash; just don&rsquo;t click <em>Log Out</em>.</p>
-</body></html>"""
+    body = """
+<p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:#3a3a3a">
+  Your OnTrack session has expired. To keep receiving your daily briefs, open the
+  <strong>OnTrack Brief</strong> Chrome extension and log into OnTrack &mdash; your
+  session refreshes automatically.
+</p>
+<p style="margin:0;font-size:13px;line-height:1.6;color:#9a9a9a">
+  You don&rsquo;t need to stay logged in to OnTrack &mdash; just don&rsquo;t click
+  <em>Log Out</em>.
+</p>"""
+    html = render_email("Re-authentication needed", body)
     subject = "OnTrack Brief — Re-authentication needed"
     return _send(html, subject, recipient, kind="Re-auth")
