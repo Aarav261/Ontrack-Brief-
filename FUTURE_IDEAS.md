@@ -29,3 +29,24 @@ picker ("time scroll").
 
 **Open question:** minute granularity (any HH:MM) vs hour-only — "whatever time
 they desire" implies full HH:MM, which is why a `brief_minute` column is needed.
+
+## Snapshot speed — remaining optimizations
+
+Done on `perf/snapshot-parallel-swr`: parallelized per-project task fetches
+(ThreadPoolExecutor) + client stale-while-revalidate. Still on the table:
+
+- **Lazy-load / parallelize feedback.** The up-to-8 `/comments` calls in
+  `api_snapshot` are still sequential and run after the task fetches. Either
+  parallelize them (own sessions, like the task fetch) or move them to a separate
+  `/api/feedback` request so the task strip renders first.
+- **Skip the redundant mint per open.** `api_snapshot` now mints on every call
+  (one extra OnTrack round-trip). Cache the minted token in-process for a few
+  minutes per user, or skip minting if the stored token was refreshed very
+  recently.
+- **Fast cached-return endpoint for cold cross-device opens.** Client SWR covers
+  repeat opens; a first open on a new device has no client cache. The server
+  already stores `last_snapshot` — a `?prefer_cached=1` fast path could return it
+  instantly while the client revalidates.
+- **Tighter interactive timeouts.** The transport `Retry(total=3, backoff=0.5)`
+  and 10–15s timeouts can stall a popup load on one flaky call; use a shorter
+  budget for the interactive snapshot path.
