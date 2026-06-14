@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqdNZfW6IzfrG6mYRZiKk5nmeWybcEmfSAkn4pCkfjY5KMkei/sBeXgwXCb2wjpsAVg9y8nlYIBHVhv7WgEKQasmQ5r4kXe0aiX/tiiZpOu2ha8PIG9GK0jszmWieAeVMSA2mcd/SDYzDDDl2iStxas9LRjOQSE6znZHkQbGLw6GjcH3oFg7in0dV3YgGhxmjlUtdJFKr/5vVCrVHJ7t+91uwGtWeT8wDtGlLNWiWV9iD4leidCcMRvcwHWDIduDDbU9d/BHGEPf8i7+Hf318exjOtJ6j89ISKSB36xmQgcvXMVRgh4APHXw7LejzjfVYwwCmFturkS0miMYnq/mIZwIDAQAB",
   "name": "OnTrack Brief",
-  "version": "1.7",
+  "version": "1.8",
   "description": "Keeps your OnTrack Brief token fresh automatically.",
   "icons": {
     "16": "icons/icon16.png",
