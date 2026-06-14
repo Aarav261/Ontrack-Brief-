@@ -82,6 +82,7 @@ def init_db() -> None:
                     subscribed              INTEGER NOT NULL DEFAULT 1,
                     recently_completed_days INTEGER NOT NULL DEFAULT 7,
                     max_todo_tasks          INTEGER NOT NULL DEFAULT 10,
+                    brief_days              INTEGER NOT NULL DEFAULT 14,
                     last_snapshot           TEXT,
                     created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
                 )
@@ -91,6 +92,7 @@ def init_db() -> None:
                 ("token_valid", "INTEGER NOT NULL DEFAULT 1"),
                 ("recently_completed_days", "INTEGER NOT NULL DEFAULT 7"),
                 ("max_todo_tasks", "INTEGER NOT NULL DEFAULT 10"),
+                ("brief_days", "INTEGER NOT NULL DEFAULT 14"),
                 ("last_snapshot", "TEXT"),
                 ("clerk_user_id", "TEXT"),
                 ("token_fail_count", "INTEGER NOT NULL DEFAULT 0"),
@@ -129,6 +131,7 @@ def init_db() -> None:
                     subscribed              INTEGER NOT NULL DEFAULT 1,
                     recently_completed_days INTEGER NOT NULL DEFAULT 7,
                     max_todo_tasks          INTEGER NOT NULL DEFAULT 10,
+                    brief_days              INTEGER NOT NULL DEFAULT 14,
                     last_snapshot           TEXT,
                     created_at              TEXT NOT NULL DEFAULT (datetime('now'))
                 )
@@ -139,6 +142,7 @@ def init_db() -> None:
                 ("token_valid", "INTEGER NOT NULL DEFAULT 1"),
                 ("recently_completed_days", "INTEGER NOT NULL DEFAULT 7"),
                 ("max_todo_tasks", "INTEGER NOT NULL DEFAULT 10"),
+                ("brief_days", "INTEGER NOT NULL DEFAULT 14"),
                 ("last_snapshot", "TEXT"),
                 ("clerk_user_id", "TEXT"),
                 ("token_fail_count", "INTEGER NOT NULL DEFAULT 0"),
@@ -351,6 +355,19 @@ def set_refresh_token(username: str, refresh_token: str) -> bool:
         return cur.rowcount > 0
 
 
+def set_brief_days(username: str, brief_days: int) -> bool:
+    """Set the per-user brief window (7 or 14 days). A standalone setter rather than
+    a new upsert_user param, so the token-refresh callers can't clobber it. Returns
+    True if a row was updated."""
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"UPDATE users SET brief_days = {_P} WHERE username = {_P}",
+            (brief_days, username),
+        )
+        return cur.rowcount > 0
+
+
 def set_subscribed(email: str, subscribed: bool) -> bool:
     """Flip the brief subscription on/off, keyed by email. Returns True if a row
     was updated. Unsubscribe is a reversible pause (this flag) — never a row
@@ -555,6 +572,19 @@ def set_task_feedback(
             (text, now, user_id, project_id, task_def_id),
         )
         return cur.rowcount > 0
+
+
+def get_capture_meta(user_id: int) -> tuple[int, str | None]:
+    """Return (task_count, latest_capture_iso) for a user. Drives the brief's
+    cold-start guard (count == 0 → no data yet, don't send) and the "as of" stamp."""
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT COUNT(*), MAX(last_seen) FROM tasks WHERE user_id = {_P}",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        return (row[0] or 0, row[1]) if row else (0, None)
 
 
 def get_unit_code(user_id: int, project_id: int) -> str | None:

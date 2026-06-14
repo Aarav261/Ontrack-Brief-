@@ -13,6 +13,55 @@ from core.ontrack import (
 )
 from core.ontrack.fetcher import _api_auth
 
+# Statuses kept OUT of the deterministic brief: work already handed in (SUBMITTED),
+# resolved (DONE), or handled face-to-face (WAITING = discuss/demonstrate, which we
+# deliberately don't surface). Everything else — where the student still owes work —
+# stays. Overdue needs no entry here: the brief window starts at today, so anything
+# past-due is excluded by the date filter, not by status.
+HIDE_SET = SUBMITTED | DONE | WAITING
+
+
+def pending_task_entries(rows: list[dict], today: date, base_url: str) -> list[dict]:
+    """Convert captured task rows (already date-windowed by db.get_pending_tasks)
+    into renderer entries, dropping handed-in/resolved statuses. Pure and
+    deterministic — reads only the stored rows, never OnTrack.
+
+    Returns entries shaped {task, unit, due} as render_html expects, sorted by
+    (deadline asc, target grade desc, unit, name).
+    """
+    base = (base_url or "").rstrip("/")
+    entries: list[dict] = []
+    for r in rows:
+        if (r.get("status") or "") in HIDE_SET:
+            continue
+        deadline = r.get("deadline")
+        if not deadline:
+            continue
+        try:
+            due = date.fromisoformat(deadline)
+        except ValueError:
+            continue
+        abbrev = r.get("abbreviation") or ""
+        url = (
+            f"{base}/projects/{r['project_id']}/dashboard/{abbrev}"
+            if base and abbrev
+            else None
+        )
+        entries.append(
+            {
+                "task": {
+                    "name": r.get("name") or abbrev,
+                    "abbreviation": abbrev,
+                    "_url": url,
+                },
+                "unit": r.get("unit_code") or "",
+                "due": due,
+                "_grade": GRADE_WEIGHT.get(r.get("target_grade_label", "P (Pass)"), 0),
+            }
+        )
+    entries.sort(key=lambda e: (e["due"], -e["_grade"], e["unit"], e["task"]["name"]))
+    return entries
+
 
 def _safe_date(task: dict) -> date:
     """Parse due_date safely, returning date.max when missing or malformed."""

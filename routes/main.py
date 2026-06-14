@@ -18,6 +18,7 @@ from core.db import (
     prune_ended_projects,
     reassign_email_by_username,
     reset_token_fail,
+    set_brief_days,
     set_refresh_token,
     set_subscribed,
     set_task_feedback,
@@ -90,6 +91,9 @@ def _process_user_setup(data: dict) -> tuple[int | None, tuple[dict, int] | None
         brief_hour = max(0, min(23, int(data.get("brief_hour", 8))))
         recently_days = max(1, int(data.get("recently_completed_days", 7)))
         max_todo = max(1, int(data.get("max_todo_tasks", 10)))
+        # The extension sends brief_days as weeks*7; the brief window is 1 or 2
+        # weeks, so clamp to [7, 14] with 14 the long-standing default.
+        brief_days = 7 if int(data.get("brief_days", 14)) <= 7 else 14
     except (ValueError, TypeError):
         return None, ({"ok": False, "error": "invalid numbers"}, 400)
 
@@ -133,6 +137,7 @@ def _process_user_setup(data: dict) -> tuple[int | None, tuple[dict, int] | None
         recently_completed_days=recently_days,
         max_todo_tasks=max_todo,
     )
+    set_brief_days(username, brief_days)
     schedule_brief(user_id, brief_hour)
     return user_id, None
 
