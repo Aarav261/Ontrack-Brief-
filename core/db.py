@@ -587,6 +587,24 @@ def get_capture_meta(user_id: int) -> tuple[int, str | None]:
         return (row[0] or 0, row[1]) if row else (0, None)
 
 
+def get_feedback_entries(user_id: int, limit: int = 3) -> list[dict]:
+    """Most recently captured tutor feedback for a user (for the extension strip)."""
+    with _connection() as conn:
+        if _USE_PG:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        else:
+            cur = conn.cursor()
+        cur.execute(
+            f"""SELECT project_id, abbreviation, name, unit_code, feedback_text
+                FROM tasks
+                WHERE user_id = {_P} AND feedback_text IS NOT NULL AND feedback_text <> ''
+                ORDER BY feedback_seen_at DESC
+                LIMIT {_P}""",
+            (user_id, limit),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
 def get_unit_code(user_id: int, project_id: int) -> str | None:
     """Look up a stored project's unit_code (for labelling task rows when the
     project_tasks ingest arrives before/without the projects list)."""

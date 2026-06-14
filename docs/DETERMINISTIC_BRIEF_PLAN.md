@@ -229,6 +229,20 @@ Result: strip == email by construction; popup opens instantly (no OnTrack round-
 
 **Ship test:** popup renders from DB with no network call to OnTrack; matches the email.
 
+**As built (Phase 5):**
+- `api_snapshot` no longer mints/validates/fetches. It buckets `get_pending_tasks`
+  rows by day offset (same `HIDE_SET` as the brief) and pulls recent feedback via a
+  new `get_feedback_entries`. `generated_at` is the latest capture (the "as of").
+- The response no longer returns `auth_token` — the extension never read it from the
+  snapshot (it gets the token from the content script). Verified in `App.jsx`.
+- Cold start (zero captured tasks) returns `is_stale + hint:"open_ontrack"`, reusing
+  the signal the popup already handled for the old token-stale path.
+- Removed `_stale_snapshot_response`. `update_user_snapshot` + the `last_snapshot`
+  column are now orphaned (nothing writes them) → dropped in Phase 6.
+- Dead imports pruned from `main.py` (`json`, `ThreadPoolExecutor`, the status sets,
+  and the OnTrack fetch helpers). `TokenManager`/`mint_auth_token`/`RefreshTokenError`
+  stay — still used by `_process_user_setup`/`link-ontrack` (Phase 6 territory).
+
 ---
 
 # Phase 6 — Decommission
