@@ -289,25 +289,46 @@ def link_ontrack():
     if not username or not auth_token:
         return {"ok": False, "error": "missing fields"}, 400
 
-    tm = TokenManager(base_url, username, auth_token)
-    try:
-        valid = tm.validate()
-    except requests.RequestException as exc:
-        log.warning("link-ontrack: OnTrack unreachable for %s: %s", username, exc)
-        return {"ok": False, "error": "OnTrack unreachable, try again"}, 503
-    if not valid:
-        return {"ok": False, "error": "invalid token"}, 401
+    # OnTrack rotates the auth_token on every response, so the token the extension
+    # scraped has almost certainly gone stale by the time a returning user reopens
+    # the popup (which auto re-links). For anyone we already hold a durable
+    # refresh_token for, mint a fresh auth_token instead of 401-ing on the stale
+    # one — the same path snapshot/brief use. Only the genuine first link (no row
+    # yet, OnTrack freshly open during install) falls back to validating the
+    # scraped token.
+    existing = get_user_by_clerk_id(clerk_id) or get_user_by_username(username)
+    is_first_link = existing is None
+    refresh_token = existing.get("refresh_token") if existing else None
+
+    if refresh_token:
+        try:
+            auth_token, _ = mint_auth_token(base_url, refresh_token, username)
+        except RefreshTokenError:
+            log.info("link-ontrack: refresh_token expired for %s", username)
+            return {"ok": False, "error": "refresh_expired", "hint": "open_ontrack"}, 401
+        except requests.RequestException as exc:
+            log.warning("link-ontrack: OnTrack unreachable minting for %s: %s", username, exc)
+            return {"ok": False, "error": "OnTrack unreachable, try again"}, 503
+    else:
+        tm = TokenManager(base_url, username, auth_token)
+        try:
+            valid = tm.validate()
+        except requests.RequestException as exc:
+            log.warning("link-ontrack: OnTrack unreachable for %s: %s", username, exc)
+            return {"ok": False, "error": "OnTrack unreachable, try again"}, 503
+        if not valid:
+            return {"ok": False, "error": "invalid token"}, 401
+        auth_token = tm.token
 
     # The popup auto re-links on every open, so we don't email on every link —
     # only on the first link, OR when the user explicitly clicks "Enable email
     # briefs" (which sends send_brief_now). The auto-link omits the flag.
-    is_first_link = get_user_by_clerk_id(clerk_id) is None
     send_now = bool(data.get("send_brief_now"))
 
     user_id = upsert_user(
-        tm.base_url,
+        base_url,
         username,
-        tm.token,
+        auth_token,
         email,
         brief_hour,
         recently_completed_days=recently_days,
