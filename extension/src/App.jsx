@@ -115,6 +115,8 @@ export default function App() {
           base_url: data.base_url || DEFAULT_BASE_URL,
           username: data.username,
           auth_token: data.auth_token,
+          // Durable token (stashed by background.js) so the row is created with it.
+          refresh_token: data.refresh_token,
           brief_hour: parseInt(data.brief_hour || '8', 10),
         },
       })
@@ -133,6 +135,7 @@ export default function App() {
       [
         'auth_token',
         'username',
+        'refresh_token',
         'base_url',
         'strip_weeks',
         'recently_completed_days',
@@ -183,7 +186,9 @@ export default function App() {
   // from Clerk server-side, so it's no longer entered here).
   const handleSaveSettings = ({ hour, briefWeeks }) =>
     new Promise((resolve, reject) => {
-      chrome.storage.local.get(['auth_token', 'username', 'base_url'], (stored) => {
+      chrome.storage.local.get(
+        ['auth_token', 'username', 'base_url', 'refresh_token'],
+        (stored) => {
         if (!stored.auth_token || !stored.username) {
           reject(new Error('no-session'))
           return
@@ -195,6 +200,7 @@ export default function App() {
             base_url: stored.base_url || DEFAULT_BASE_URL,
             username: stored.username,
             auth_token: stored.auth_token,
+            refresh_token: stored.refresh_token,
             brief_hour: parseInt(hour, 10),
             brief_days: parseInt(briefWeeks, 10) * 7,
             // Deliberate "Enable email briefs" click — send one now even if the

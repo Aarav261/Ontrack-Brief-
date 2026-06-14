@@ -16,6 +16,11 @@ async function pushRefreshToken(username) {
       name: "refresh_token",
     });
     if (!cookie || !cookie.value) return;
+    // Stash it where the popup can read it (the cookie is HttpOnly, so the popup
+    // can't read it directly) — App.jsx passes it to /link-ontrack so a brand-new
+    // user's row is created WITH a refresh_token, instead of waiting for a later
+    // /refresh-credential push that 404s until the row exists.
+    chrome.storage.local.set({ refresh_token: cookie.value });
     await fetch(`${APP_URL}/refresh-credential`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

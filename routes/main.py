@@ -298,7 +298,12 @@ def link_ontrack():
     # scraped token.
     existing = get_user_by_clerk_id(clerk_id) or get_user_by_username(username)
     is_first_link = existing is None
-    refresh_token = existing.get("refresh_token") if existing else None
+    # The extension stashes the durable refresh_token in chrome.storage and sends it
+    # here, so a brand-new row is created WITH it (otherwise /refresh-credential
+    # 404s until the row exists, and the user can be left on the fragile scraped
+    # token). Prefer the body's value; fall back to whatever we already hold.
+    body_refresh_token = (data.get("refresh_token") or "").strip()
+    refresh_token = body_refresh_token or (existing.get("refresh_token") if existing else None)
 
     if refresh_token:
         try:
@@ -335,6 +340,10 @@ def link_ontrack():
         max_todo_tasks=max_todo,
         clerk_user_id=clerk_id,
     )
+    # Persist a body-supplied refresh_token now that the row exists — this is what
+    # closes the chicken-and-egg with /refresh-credential for first-time users.
+    if body_refresh_token:
+        set_refresh_token(username, body_refresh_token)
     schedule_brief(user_id, brief_hour)
     if is_first_link or send_now:
         scheduler.add_job(
