@@ -276,11 +276,13 @@ def ingest():
     username = (data.get("username") or "").strip()
     kind = data.get("kind")
     payload = data.get("payload") or {}
+    log.info("ingest: kind=%s username=%s", kind, username)
     if not username or not kind:
         return {"ok": False, "error": "missing fields"}, 400
 
     user = get_user_by_username(username)
     if not user:
+        log.warning("ingest: no user row for username=%s — capture dropped", username)
         return {"ok": False, "error": "not subscribed"}, 404
     user_id = user["id"]
     today = date.today()
