@@ -5,6 +5,7 @@ export default function Settings({
   initialHour,
   initialBriefWeeks,
   initialStripWeeks,
+  subscribed = true,
   onSubscribe,
   onUnsubscribe,
   onStripWeeksChange,
@@ -46,7 +47,10 @@ export default function Settings({
   async function handleUnsubscribe() {
     try {
       await onUnsubscribe()
-      setMsg({ type: 'success', text: "You've been unsubscribed." })
+      setMsg({
+        type: 'success',
+        text: 'Briefs paused. Re-enable any time — your settings are kept.',
+      })
     } catch {
       setMsg({ type: 'error', text: 'Could not reach server.' })
     }
@@ -69,6 +73,13 @@ export default function Settings({
         <p className="settings-sub">
           A daily task summary, sent to your account email on weekday mornings.
         </p>
+
+        {!subscribed && (
+          <div className="msg warning">
+            Briefs are paused. Click “Re-enable email briefs” to resume — your
+            settings and account are kept.
+          </div>
+        )}
 
         <div className="field-group">
           <label>Briefs are sent to</label>
@@ -113,14 +124,20 @@ export default function Settings({
           onClick={handleSubscribe}
           disabled={loading}
         >
-          {loading ? 'Saving…' : 'Enable email briefs'}
+          {loading
+            ? 'Saving…'
+            : subscribed
+              ? 'Save & send a brief now'
+              : 'Re-enable email briefs'}
         </button>
 
         {msg && <div className={`msg ${msg.type}`}>{msg.text}</div>}
 
-        <div className="unsubscribe">
-          <a onClick={handleUnsubscribe}>Unsubscribe</a>
-        </div>
+        {subscribed && (
+          <div className="unsubscribe">
+            <a onClick={handleUnsubscribe}>Unsubscribe</a>
+          </div>
+        )}
       </div>
     </div>
   )

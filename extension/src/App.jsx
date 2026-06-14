@@ -20,6 +20,7 @@ export default function App() {
   const [statusText, setStatusText] = useState('Waiting for OnTrack…')
   const [days, setDays] = useState(null)
   const [feedback, setFeedback] = useState([])
+  const [subscribed, setSubscribed] = useState(true)
   const [stripLoading, setStripLoading] = useState(false)
   const [footerSync, setFooterSync] = useState('')
   const snapshotAuthRef = useRef(null)
@@ -54,6 +55,8 @@ export default function App() {
           // blocking spinner. Skip the network entirely while still fresh.
           setDays(cached.data.days)
           setFeedback(cached.data.feedback || [])
+          if (typeof cached.data.subscribed === 'boolean')
+            setSubscribed(cached.data.subscribed)
           setStripLoading(false)
           setFooterSync(syncLabel(cached.ts))
           if (!force && fresh) return
@@ -82,6 +85,7 @@ export default function App() {
             }
             setDays(data.days)
             setFeedback(data.feedback || [])
+            if (typeof data.subscribed === 'boolean') setSubscribed(data.subscribed)
             setFooterSync(data.is_stale ? 'Stale Data' : syncLabel(ts))
           })
           .catch((err) => {
@@ -211,6 +215,7 @@ export default function App() {
           .then(() => {
             chrome.storage.local.set({ brief_hour: hour, brief_weeks: briefWeeks })
             setStorageData((prev) => ({ ...prev, brief_hour: hour }))
+            setSubscribed(true) // enabling/saving (re)activates the subscription
             resolve()
           })
           .catch(reject)
@@ -219,7 +224,8 @@ export default function App() {
 
   const handleUnsubscribe = () =>
     api('/unsubscribe', { method: 'POST', getToken }).then(() => {
-      setStatus('warning', 'Unsubscribed — your daily briefs are paused.')
+      setSubscribed(false)
+      setStatus('warning', 'Briefs paused — re-enable them any time.')
     })
 
   const handleReportIssue = (description) =>
@@ -254,6 +260,7 @@ export default function App() {
           initialHour={storageData.brief_hour || '8'}
           initialBriefWeeks={storageData.brief_weeks || '1'}
           initialStripWeeks={storageData.strip_weeks || '1'}
+          subscribed={subscribed}
           onSubscribe={handleSaveSettings}
           onUnsubscribe={handleUnsubscribe}
           onStripWeeksChange={handleStripWeeksChange}

@@ -78,6 +78,7 @@ def init_db() -> None:
                     brief_hour              INTEGER NOT NULL DEFAULT 8,
                     token_valid             INTEGER NOT NULL DEFAULT 1,
                     token_fail_count        INTEGER NOT NULL DEFAULT 0,
+                    subscribed              INTEGER NOT NULL DEFAULT 1,
                     recently_completed_days INTEGER NOT NULL DEFAULT 7,
                     max_todo_tasks          INTEGER NOT NULL DEFAULT 10,
                     last_snapshot           TEXT,
@@ -93,6 +94,7 @@ def init_db() -> None:
                 ("clerk_user_id", "TEXT"),
                 ("token_fail_count", "INTEGER NOT NULL DEFAULT 0"),
                 ("refresh_token", "TEXT"),
+                ("subscribed", "INTEGER NOT NULL DEFAULT 1"),
             ]:
                 cur.execute(f"""
                     DO $$
@@ -123,6 +125,7 @@ def init_db() -> None:
                     brief_hour              INTEGER NOT NULL DEFAULT 8,
                     token_valid             INTEGER NOT NULL DEFAULT 1,
                     token_fail_count        INTEGER NOT NULL DEFAULT 0,
+                    subscribed              INTEGER NOT NULL DEFAULT 1,
                     recently_completed_days INTEGER NOT NULL DEFAULT 7,
                     max_todo_tasks          INTEGER NOT NULL DEFAULT 10,
                     last_snapshot           TEXT,
@@ -139,6 +142,7 @@ def init_db() -> None:
                 ("clerk_user_id", "TEXT"),
                 ("token_fail_count", "INTEGER NOT NULL DEFAULT 0"),
                 ("refresh_token", "TEXT"),
+                ("subscribed", "INTEGER NOT NULL DEFAULT 1"),
             ]:
                 if col not in cols:
                     cur.execute(f"ALTER TABLE users ADD COLUMN {col} {typedef}")
@@ -304,6 +308,20 @@ def set_refresh_token(username: str, refresh_token: str) -> bool:
         cur.execute(
             f"UPDATE users SET refresh_token = {_P} WHERE username = {_P}",
             (encrypted, username),
+        )
+        return cur.rowcount > 0
+
+
+def set_subscribed(email: str, subscribed: bool) -> bool:
+    """Flip the brief subscription on/off, keyed by email. Returns True if a row
+    was updated. Unsubscribe is a reversible pause (this flag) — never a row
+    delete — so the user keeps their tokens/prefs and can resume instantly.
+    """
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"UPDATE users SET subscribed = {_P} WHERE email = {_P}",
+            (1 if subscribed else 0, email),
         )
         return cur.rowcount > 0
 

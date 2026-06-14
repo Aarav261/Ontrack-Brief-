@@ -60,6 +60,11 @@ def run_brief(user_id: int, *, confirm_if_empty: bool = False) -> None:
     if not user:
         log.error("run_brief: no user found for id=%s", user_id)
         return
+    if not user.get("subscribed", 1):
+        # Defensive: a paused user should have no scheduled job, but never email
+        # someone who has unsubscribed even if a stale job somehow fires.
+        log.info("run_brief: %s is unsubscribed — skipping", user["email"])
+        return
     email = user["email"]
     recently_completed_days = user.get("recently_completed_days", 7)
 
@@ -191,6 +196,9 @@ def startup() -> None:
         for user in get_all_users():
             if not user.get("token_valid", 1):
                 log.info("Skipping schedule for %s — token invalid", user["username"])
+                continue
+            if not user.get("subscribed", 1):
+                log.info("Skipping schedule for %s — unsubscribed (paused)", user["username"])
                 continue
             schedule_brief(user["id"], user["brief_hour"])
     except Exception as exc:

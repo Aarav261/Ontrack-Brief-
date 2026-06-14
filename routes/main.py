@@ -15,9 +15,9 @@ from core.db import (
     get_user_by_username,
     link_clerk_id_by_email,
     reassign_email_by_username,
-    remove_user,
     reset_token_fail,
     set_refresh_token,
+    set_subscribed,
     upsert_user,
     update_user_snapshot,
 )
@@ -329,6 +329,7 @@ def link_ontrack():
     # only on the first link, OR when the user explicitly clicks "Enable email
     # briefs" (which sends send_brief_now). The auto-link omits the flag.
     send_now = bool(data.get("send_brief_now"))
+    was_paused = bool(existing) and not existing.get("subscribed", 1)
 
     user_id = upsert_user(
         base_url,
@@ -344,21 +345,35 @@ def link_ontrack():
     # closes the chicken-and-egg with /refresh-credential for first-time users.
     if body_refresh_token:
         set_refresh_token(username, body_refresh_token)
-    schedule_brief(user_id, brief_hour)
-    if is_first_link or send_now:
-        scheduler.add_job(
-            run_brief,
-            DateTrigger(run_date=datetime.now() + timedelta(seconds=10)),
-            args=[user_id],
-            kwargs={"confirm_if_empty": True},
-            id=f"welcome_{user_id}",
-            replace_existing=True,
-        )
+
+    # An explicit "Enable email briefs" click resumes a paused subscription.
+    if send_now:
+        set_subscribed(email, True)
+
+    # Only (re)schedule for an active subscription. A paused user re-linking on a
+    # bare popup open must NOT be silently resubscribed — keep their creds warm so
+    # the snapshot works, but leave briefs off until they click enable.
+    if send_now or not was_paused:
+        schedule_brief(user_id, brief_hour)
+        if is_first_link or send_now:
+            scheduler.add_job(
+                run_brief,
+                DateTrigger(run_date=datetime.now() + timedelta(seconds=10)),
+                args=[user_id],
+                kwargs={"confirm_if_empty": True},
+                id=f"welcome_{user_id}",
+                replace_existing=True,
+            )
+            log.info(
+                "Immediate brief scheduled for clerk_user_id=%s (first_link=%s, send_now=%s)",
+                clerk_id,
+                is_first_link,
+                send_now,
+            )
+    else:
         log.info(
-            "Immediate brief scheduled for clerk_user_id=%s (first_link=%s, send_now=%s)",
-            clerk_id,
-            is_first_link,
-            send_now,
+            "link-ontrack: %s is paused — refreshed creds, briefs stay off",
+            username,
         )
     log.info("OnTrack linked for clerk_user_id=%s (user_id=%s)", clerk_id, user_id)
     return {"ok": True}
@@ -543,6 +558,7 @@ def api_snapshot():
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "days": days,
         "feedback": feedback_entries,
+        "subscribed": bool(db_user.get("subscribed", 1)) if db_user else True,
         "auth_token": tm.token,
     }
 
@@ -591,13 +607,15 @@ def report_issue():
 
 @main_bp.route("/unsubscribe/<path:email>")
 def unsubscribe(email: str):
+    # Pause, don't delete: drop the scheduled job and flip the flag so the user
+    # keeps their tokens/prefs and can resume from the popup with one click.
     for user in get_all_users():
         if user["email"] == email:
             job_id = f"brief_{user['id']}"
             if scheduler.get_job(job_id):
                 scheduler.remove_job(job_id)
             break
-    remove_user(email)
+    set_subscribed(email, False)
     return render_template("unsubscribed.html", email=email)
 
 
@@ -613,8 +631,12 @@ def unsubscribe_clerk():
     user = get_user_by_clerk_id(g.clerk_user_id)
     if not user:
         return {"ok": True}  # nothing linked — idempotent no-op
+    # Reversible pause: drop the job and flip subscribed=0, but keep the row so
+    # tokens/preferences survive and re-enabling is instant. A hard delete here
+    # was the bug — the popup's auto re-link on next open silently recreated the
+    # user and fired a fresh welcome brief.
     job_id = f"brief_{user['id']}"
     if scheduler.get_job(job_id):
         scheduler.remove_job(job_id)
-    remove_user(user["email"])
+    set_subscribed(user["email"], False)
     return {"ok": True}
