@@ -24,9 +24,16 @@ from core.db import upsert_user
 
 log = logging.getLogger(__name__)
 
-# Retry transient failures at the transport layer.
+# Retry transient failures at the transport layer. read>0 retries slow responses
+# (the OnTrack "hiccup" that was being misread as token expiry), and POST is opt-in
+# because the only POST we make is the mint — which is non-destructive
+# (delete_auth_token=False), so retrying it is safe and can't double-submit anything.
 RETRY = Retry(
-    total=3, backoff_factor=0.5, status_forcelist={429, 500, 502, 503, 504}, read=0
+    total=3,
+    backoff_factor=0.5,
+    status_forcelist={429, 500, 502, 503, 504},
+    read=2,
+    allowed_methods={"GET", "POST"},
 )
 
 # Doubtfire returns the rotated token in one of these response headers.
@@ -81,17 +88,28 @@ def mint_auth_token(
         r = http.post(
             f"{base_url}/api/auth/access-token",
             json={"delete_auth_token": False},
-            timeout=15,
+            # (connect, read): fail fast on a dead connection, but give a *slow*
+            # OnTrack room to answer rather than bailing and looking like expiry.
+            timeout=(5, 25),
         )
-    except requests.RequestException as exc:
-        raise RefreshTokenError(f"OnTrack unreachable while minting token: {exc}") from exc
+    except requests.RequestException:
+        # TRANSIENT, not expiry: a timeout / connection error does not mean the
+        # refresh_token is dead. Re-raise as-is so callers retry / report
+        # "unreachable" — never pause briefs or tell the user to re-login (which
+        # would itself rotate the token and cause the very breakage we avoid).
+        raise
 
     if r.status_code in _AUTH_REJECTED:
+        # Genuine rejection — the token really is invalid (e.g. rotated by a re-login).
         raise RefreshTokenError(
             f"OnTrack rejected the refresh_token (HTTP {r.status_code}) — likely expired"
         )
     if not r.ok:
-        raise RefreshTokenError(f"OnTrack returned HTTP {r.status_code} on token mint")
+        # A non-auth server error (5xx etc.) is transient, not expiry. Surface it
+        # as an HTTP error (a RequestException) so callers treat it as "try again".
+        raise requests.HTTPError(
+            f"OnTrack returned HTTP {r.status_code} on token mint", response=r
+        )
 
     payload = r.json() if r.content else None
     if not isinstance(payload, dict):
@@ -108,7 +126,9 @@ def mint_auth_token(
         or payload.get("token")
     )
     if not auth_token:
-        raise RefreshTokenError("Token mint succeeded but no auth_token in response")
+        # OK response but malformed (no token) — treat as transient, not expiry,
+        # so a one-off OnTrack glitch doesn't pause the user.
+        raise requests.HTTPError("Token mint succeeded but no auth_token in response")
 
     user = payload.get("user") if isinstance(payload.get("user"), dict) else {}
     log.info("Minted fresh auth_token from refresh_token (…%s)", auth_token[-6:])

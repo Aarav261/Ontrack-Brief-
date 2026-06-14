@@ -31,6 +31,22 @@ async function pushRefreshToken(username) {
   }
 }
 
+// Re-login is the one thing that ROTATES the refresh_token: OnTrack issues a new
+// one and invalidates the old, so any copy we already stored is instantly dead.
+// Watch the cookie directly (event-driven — wakes the service worker on its own,
+// no open popup needed) so the moment it changes we push the new value. The
+// server's /refresh-credential then un-pauses any briefs that were paused on the
+// now-stale token. This is what makes a re-login self-heal with zero user action.
+chrome.cookies.onChanged.addListener(({ cookie, removed }) => {
+  if (removed) return;
+  if (cookie.name !== "refresh_token") return;
+  if (!cookie.domain.includes("ontrack.deakin.edu.au")) return;
+  chrome.storage.local.get("username", ({ username }) => {
+    // username never changes across a re-login, so the stored one is still valid.
+    if (username) pushRefreshToken(username);
+  });
+});
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type !== "refresh-token") return false;
 

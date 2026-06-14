@@ -31,8 +31,11 @@ export default function Settings({
       let text
       if (err.message === 'no-session') {
         text = 'No OnTrack session found. Open OnTrack first.'
-      } else if (err.status === 400) {
-        text = 'Session expired — log out and back in to OnTrack, then try again.'
+      } else if (err.status === 401) {
+        // Genuinely logged out — opening OnTrack lets us recapture the session.
+        text = 'Open OnTrack to refresh your session, then try again.'
+      } else if (err.status === 503) {
+        text = 'OnTrack is busy right now — please try again in a moment.'
       } else if (err.status) {
         text = `Server error (${err.status}).`
       } else {

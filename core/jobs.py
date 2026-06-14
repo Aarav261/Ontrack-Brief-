@@ -3,6 +3,8 @@ import os
 from datetime import date
 from zoneinfo import ZoneInfo
 
+import requests
+
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.triggers.cron import CronTrigger
 
@@ -92,6 +94,16 @@ def run_brief(user_id: int, *, confirm_if_empty: bool = False) -> None:
                 exc,
             )
             _pause_and_reauth(user_id, email)
+            return
+        except requests.RequestException as exc:
+            # Transient OnTrack hiccup (timeout / 5xx) — NOT expiry. Skip today's
+            # brief and let the next scheduled run retry. Do not pause or send a
+            # re-auth email: a false "re-login" prompt would rotate the token.
+            log.warning(
+                "Mint failed transiently for %s (%s) — skipping this run, no pause",
+                email,
+                exc,
+            )
             return
 
     try:

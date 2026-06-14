@@ -78,7 +78,7 @@ export default function App() {
           .then((data) => {
             const ts = Date.now()
             if (data.is_stale) {
-              setStatus('warning', 'Session expired — open OnTrack for latest updates')
+              setStatus('warning', 'Open OnTrack to refresh your tasks')
             } else {
               setStatus('ok', `Logged in as ${username}`)
               chrome.storage.local.set({ [SNAPSHOT_KEY]: { ts, data } })
@@ -93,7 +93,7 @@ export default function App() {
             // only surface actionable states, and stay quiet on generic errors
             // when we already have something to show.
             if (err?.data?.hint === 'open_ontrack') {
-              setStatus('warning', 'Session expired — open OnTrack to refresh')
+              setStatus('warning', 'Open OnTrack to refresh your tasks')
             } else if (err?.data?.error === 'not_linked') {
               setStatus('warning', 'Open OnTrack so we can link your account')
             } else if (!hasCache) {
