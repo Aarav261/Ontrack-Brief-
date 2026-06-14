@@ -100,9 +100,15 @@ navigates, so `/ingest` accepts one fragment at a time and upserts. Reuses
 — the date-resolution heuristic now runs once, at capture time, against fresh data, and
 the result is frozen.
 
+Identity is the **body-supplied username**, mirroring `/refresh-token` — the
+background service worker pushes captures while the popup is closed, so there's no
+Clerk session in that context. The payload is course data, not a credential; the
+worst case is a known-username task list being poisoned (same trust model the token
+push already accepts). Rate-limited at 120/min (passive capture is chatty).
+
 ```
-POST /ingest        (auth: @require_clerk_auth, resolve user as /api/snapshot does)
-Body: { kind, payload }
+POST /ingest        (resolve user by body username, like /refresh-token)
+Body: { username, kind, payload }
 
 kind = "projects"        payload = raw /api/projects response
    → filter to active units (end_date ≥ today), upsert_projects, prune ended

@@ -11,13 +11,18 @@ from core.clerk_auth import require_clerk_auth
 from core.constants import URGENT, TODO, WAITING, SUBMITTED
 from core.db import (
     get_all_users,
+    get_unit_code,
     get_user_by_clerk_id,
     get_user_by_username,
     link_clerk_id_by_email,
+    prune_ended_projects,
     reassign_email_by_username,
     reset_token_fail,
     set_refresh_token,
     set_subscribed,
+    set_task_feedback,
+    upsert_projects,
+    upsert_tasks,
     upsert_user,
     update_user_snapshot,
 )
@@ -32,6 +37,11 @@ from core.ontrack import (
     fetch_tasks_direct,
     mint_auth_token,
     new_session,
+)
+from core.ontrack.fetcher import (
+    _append_missing_tasks,
+    _enrich_tasks,
+    _extract_latest_feedback,
 )
 from extensions import limiter, scheduler
 
@@ -257,6 +267,91 @@ def refresh_credential():
         log.info("Refresh token stored for %s", username)
 
     return {"ok": True}
+
+
+@main_bp.route("/ingest", methods=["POST"])
+@limiter.limit("120 per minute")
+def ingest():
+    """Receive OnTrack data captured off the student's own session and store it.
+
+    The morning brief (and the extension strip) read these rows instead of calling
+    OnTrack — so there is no token, mint, or re-auth path here. Identity is the
+    body-supplied username, the same trust model as /refresh-token: the payload is
+    course data, not a credential, and the worst case is a known-username user's
+    task list being poisoned. Incremental and idempotent — the extension pushes one
+    fragment at a time as the student navigates; each kind upserts independently.
+
+    Body: { username, kind, payload }
+      kind="projects"       payload = raw /api/projects list
+      kind="project_tasks"  payload = { project_id, unit_code?, tasks, task_definitions }
+      kind="feedback"       payload = { project_id, task_def_id, comments, student_id? }
+    """
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    kind = data.get("kind")
+    payload = data.get("payload") or {}
+    if not username or not kind:
+        return {"ok": False, "error": "missing fields"}, 400
+
+    user = get_user_by_username(username)
+    if not user:
+        return {"ok": False, "error": "not subscribed"}, 404
+    user_id = user["id"]
+    today = date.today()
+
+    # A live push proves the OnTrack session is alive — clear any rotation-race
+    # strikes, the same signal /refresh-token uses.
+    reset_token_fail(user["email"])
+
+    if kind == "projects":
+        if not isinstance(payload, list):
+            return {"ok": False, "error": "payload must be a list"}, 400
+        projects = []
+        for p in payload:
+            unit = p.get("unit") or {}
+            end_date = unit.get("end_date")
+            if end_date and end_date < today.isoformat():
+                continue  # ended unit — let the prune drop any stragglers
+            projects.append(
+                {
+                    "project_id": p.get("id"),
+                    "unit_code": unit.get("code"),
+                    "unit_name": unit.get("name"),
+                    "unit_end_date": end_date,
+                }
+            )
+        projects = [p for p in projects if p["project_id"] is not None]
+        stored = upsert_projects(user_id, projects)
+        prune_ended_projects(user_id, today.isoformat())
+        return {"ok": True, "stored": stored}
+
+    if kind == "project_tasks":
+        project_id = payload.get("project_id")
+        if project_id is None:
+            return {"ok": False, "error": "missing project_id"}, 400
+        tasks = payload.get("tasks") or []
+        task_defs = payload.get("task_definitions") or []
+        # Same enrichment the server-pull path uses — resolve deadlines and
+        # synthesise not-yet-started tasks — but run once here, against fresh data.
+        _enrich_tasks(tasks, task_defs)
+        _append_missing_tasks(tasks, task_defs)
+        unit_code = payload.get("unit_code") or get_unit_code(user_id, project_id) or ""
+        stored = upsert_tasks(user_id, project_id, unit_code, tasks)
+        return {"ok": True, "stored": stored}
+
+    if kind == "feedback":
+        project_id = payload.get("project_id")
+        task_def_id = payload.get("task_def_id")
+        if project_id is None or task_def_id is None:
+            return {"ok": False, "error": "missing ids"}, 400
+        comments = payload.get("comments")
+        text = _extract_latest_feedback(comments, payload.get("student_id"))
+        if not text:
+            return {"ok": True, "stored": 0}
+        updated = set_task_feedback(user_id, project_id, task_def_id, text)
+        return {"ok": True, "stored": 1 if updated else 0}
+
+    return {"ok": False, "error": f"unknown kind: {kind}"}, 400
 
 
 @main_bp.route("/link-ontrack", methods=["POST"])

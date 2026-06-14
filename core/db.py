@@ -557,6 +557,19 @@ def set_task_feedback(
         return cur.rowcount > 0
 
 
+def get_unit_code(user_id: int, project_id: int) -> str | None:
+    """Look up a stored project's unit_code (for labelling task rows when the
+    project_tasks ingest arrives before/without the projects list)."""
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT unit_code FROM projects WHERE user_id = {_P} AND project_id = {_P}",
+            (user_id, project_id),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
 def get_pending_tasks(user_id: int, today_iso: str, end_iso: str) -> list[dict]:
     """Tasks due in the inclusive window [today, end], ordered by deadline. Status
     filtering (HIDE_SET) is applied by the brief layer, not here — this just bounds
