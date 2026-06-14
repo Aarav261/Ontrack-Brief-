@@ -66,3 +66,24 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   return true; // keep message channel open for async response
 });
+
+// Forward captured OnTrack data to /ingest. Separate listener so the token path
+// above stays untouched; both run on every message and ignore kinds not theirs.
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type !== "ingest") return false;
+
+  fetch(`${APP_URL}/ingest`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: msg.username,
+      kind: msg.kind,
+      payload: msg.payload,
+    }),
+  })
+    .then((r) => r.json())
+    .then(() => sendResponse({ ok: true }))
+    .catch(() => sendResponse({ ok: false }));
+
+  return true; // async response
+});
