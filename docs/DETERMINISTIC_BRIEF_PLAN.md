@@ -193,6 +193,22 @@ send_brief_to(...)                         # unchanged
 `_pause_and_reauth`, `send_reauth_email`, the whole `TokenExpiredError` /
 `RefreshTokenError` ladder (`:82-154`).
 
+**As built (Phase 4 deviations from the sketch above):**
+- The 1/2-week window is now real: a `brief_days` column (default 14) + a localised
+  `set_brief_days(username, days)` setter (not a new `upsert_user` param, so the
+  token-refresh callers can't clobber it). `_process_user_setup` clamps the
+  extension's `weeks*7` to {7, 14}; `run_brief` reads `user["brief_days"]`.
+- `HIDE_SET = SUBMITTED ∪ DONE ∪ WAITING` — discuss/demonstrate are hidden, per the
+  final call (not captured/surfaced).
+- Cold-start guard via `get_capture_meta(user_id)`: zero captured tasks → skip the
+  daily send (confirm only on the explicit enable click); has data but nothing due →
+  send the normal "nothing due" email, preserving prior behaviour.
+- `_build_brief` / `_score` are **kept for now** — `/api/snapshot` still calls
+  `build_brief_direct` until Phase 5. They get deleted in Phase 6 with the rest of
+  the server-pull path. The dev scripts (`scripts/brief.py`, `test_send_now.py`)
+  also still use the legacy path and remain functional (`render_html`'s new `as_of`
+  arg is optional).
+
 **`core/brief/renderer.py`** — render one forward list (no status sections); add an
 "as of {last_seen}" line so a stale brief is honest.
 
