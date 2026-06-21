@@ -6,7 +6,7 @@ from apscheduler.triggers.date import DateTrigger
 from flask import Blueprint, g, jsonify, render_template, request
 
 from core.clerk_auth import require_clerk_auth
-from core.brief.builder import HIDE_SET
+from core.brief.builder import is_hidden
 from core.db import (
     get_all_users,
     get_capture_meta,
@@ -289,7 +289,14 @@ def ingest():
 
     # A live push proves the OnTrack session is alive — clear any rotation-race
     # strikes, the same signal /refresh-token uses.
+    was_invalid = not user.get("token_valid", 1)
     reset_token_fail(user["email"])
+    if was_invalid:
+        # User's token_valid=0 flag may have been set by the old polling code,
+        # which also removed their brief job. Restore it here so a pure-ingest
+        # user isn't silently left without briefs until a server restart.
+        log.info("ingest: restoring brief job for %s (was token_invalid)", user["email"])
+        schedule_brief(user_id, user["brief_hour"])
 
     if kind == "projects":
         if not isinstance(payload, list):
@@ -317,13 +324,22 @@ def ingest():
         project_id = payload.get("project_id")
         if project_id is None:
             return {"ok": False, "error": "missing project_id"}, 400
-        tasks = payload.get("tasks") or []
+        # Guard: _enrich_tasks and _append_missing_tasks both use
+        # t["task_definition_id"] (hard key access). Drop any task dicts the
+        # extension sent without that field before passing them in.
+        tasks = [
+            t for t in (payload.get("tasks") or [])
+            if t.get("task_definition_id") is not None
+        ]
         task_defs = payload.get("task_definitions") or []
         # Same enrichment the server-pull path uses — resolve deadlines and
         # synthesise not-yet-started tasks — but run once here, against fresh data.
         _enrich_tasks(tasks, task_defs)
         _append_missing_tasks(tasks, task_defs)
-        unit_code = payload.get("unit_code") or get_unit_code(user_id, project_id) or ""
+        # DB lookup wins over client-supplied unit_code so the extension can't
+        # inject an arbitrary label; fall back to the payload when the project row
+        # hasn't been upserted yet.
+        unit_code = get_unit_code(user_id, project_id) or payload.get("unit_code") or ""
         stored = upsert_tasks(user_id, project_id, unit_code, tasks)
         return {"ok": True, "stored": stored}
 
@@ -506,7 +522,7 @@ def api_snapshot():
     end = today + timedelta(days=days_count - 1)
     task_count, last_seen = get_capture_meta(user_id)
     for r in get_pending_tasks(user_id, today.isoformat(), end.isoformat()):
-        if (r.get("status") or "") in HIDE_SET:
+        if is_hidden(r):
             continue
         try:
             offset = (date.fromisoformat(r["deadline"]) - today).days
@@ -542,7 +558,10 @@ def api_snapshot():
         )
 
     response_data = {
-        "generated_at": last_seen or datetime.now().isoformat(timespec="seconds"),
+        # None when no data has been captured yet — avoids a misleading "just now"
+        # timestamp on a cold-start response.
+        "generated_at": last_seen,
+        "has_data": task_count > 0,
         "days": days,
         "feedback": feedback_entries,
         "subscribed": bool(db_user.get("subscribed", 1)),

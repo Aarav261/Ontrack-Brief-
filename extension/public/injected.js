@@ -33,7 +33,10 @@
   const defsByUnit  = {}; // unit_id → task_definitions          (from /api/units/{id})
 
   function pathOf(rawUrl) {
-    try { return new URL(rawUrl, location.origin).pathname; } catch { return ""; }
+    try {
+      // Strip trailing slash so /api/projects/ and /api/projects match the same rule.
+      return new URL(rawUrl, location.origin).pathname.replace(/\/$/, "");
+    } catch { return ""; }
   }
 
   // Cheap gate so we only JSON-parse the handful of endpoints we care about.
@@ -75,13 +78,14 @@
 
     if (p === "/api/projects" && Array.isArray(data)) {
       if (data.length && data[0].user && data[0].user.id) {
-        lastStudentId = data[0].user.id; // needed to skip the student's own comments
+        lastStudentId = data[0].user.id;
       }
       emitData("projects", data);
     } else if ((m = p.match(/^\/api\/projects\/(\d+)$/))) {
       const unitId = data.unit_id || (data.unit && data.unit.id);
       if (unitId == null) return;
-      tasksByUnit[unitId] = { project_id: Number(m[1]), tasks: data.tasks || [] };
+      const tasks = data.tasks || [];
+      tasksByUnit[unitId] = { project_id: Number(m[1]), tasks };
       maybeEmitProjectTasks(unitId);
     } else if ((m = p.match(/^\/api\/units\/(\d+)$/))) {
       defsByUnit[Number(m[1])] = data.task_definitions || [];
@@ -121,10 +125,37 @@
         emit(h["auth-token"], h["username"]);
       }
 
+      // TEMP diagnostic: log every /api/ call so we can see the real paths +
+      // responseType and whether our matcher catches them. Remove once confirmed.
+      if (this._url && String(this._url).indexOf("/api/") !== -1) {
+        console.log(
+          "[OnTrack Brief] api",
+          this.responseType || "(text)",
+          isDataUrl(this._url) ? "MATCH" : "skip",
+          this._url
+        );
+      }
+
       // Capture the response body for the data endpoints we care about.
+      // Angular's HttpClient sets responseType="json", and reading responseText
+      // THROWS in that mode — so prefer the already-parsed `this.response` and only
+      // fall back to parsing text. (This is why token capture worked but data
+      // capture silently didn't: headers read fine, responseText threw.)
       try {
-        if (isDataUrl(this._url)) handleData(this._url, JSON.parse(this.responseText));
-      } catch { /* non-JSON / unreadable body — ignore */ }
+        if (isDataUrl(this._url)) {
+          const rt = this.responseType;
+          let body = null;
+          if (rt === "json") {
+            body = this.response;
+          } else if (rt === "" || rt === "text") {
+            body = JSON.parse(this.responseText);
+          }
+          if (body != null) {
+            console.log("[OnTrack Brief] captured", this._url);
+            handleData(this._url, body);
+          }
+        }
+      } catch (e) { /* non-JSON / unreadable body — ignore */ }
     });
     return _open.apply(this, arguments);
   };
