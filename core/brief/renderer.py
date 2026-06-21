@@ -83,7 +83,28 @@ def _task_row(entry: dict, today: date) -> str:
     )
 
 
-def render_html(pending_entries: list[dict], today: date, window_days: int = 14) -> str:
+def _as_of_note(as_of: str | None) -> str:
+    """A muted line stamping when the underlying OnTrack data was last captured —
+    the brief is built from stored data, so this keeps a stale brief honest."""
+    if not as_of:
+        return ""
+    stamp = as_of.split("T")[0]  # ISO timestamp → date
+    try:
+        stamp = date.fromisoformat(stamp).strftime("%b %d, %Y")
+    except ValueError:
+        pass
+    return (
+        f'<p style="margin:14px 0 0;color:#aaaaaa;font-size:11px;line-height:1.5">'
+        f"Based on your OnTrack data as of {stamp}. Open OnTrack to refresh.</p>"
+    )
+
+
+def render_html(
+    pending_entries: list[dict],
+    today: date,
+    window_days: int = 14,
+    as_of: str | None = None,
+) -> str:
     title = f"Pending tasks due in the next {window_days} days"
 
     if not pending_entries:
@@ -106,4 +127,4 @@ def render_html(pending_entries: list[dict], today: date, window_days: int = 14)
   <tbody>{rows}</tbody>
 </table>"""
 
-    return render_email(title, body)
+    return render_email(title, body + _as_of_note(as_of))

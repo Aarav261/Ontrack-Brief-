@@ -1,6 +1,4 @@
 import logging
-import json
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 
 import requests
@@ -8,30 +6,38 @@ from apscheduler.triggers.date import DateTrigger
 from flask import Blueprint, g, jsonify, render_template, request
 
 from core.clerk_auth import require_clerk_auth
-from core.constants import URGENT, TODO, WAITING, SUBMITTED
+from core.brief.builder import is_hidden
 from core.db import (
     get_all_users,
+    get_capture_meta,
+    get_feedback_entries,
+    get_pending_tasks,
+    get_unit_code,
     get_user_by_clerk_id,
     get_user_by_username,
     link_clerk_id_by_email,
+    prune_ended_projects,
     reassign_email_by_username,
     reset_token_fail,
+    set_brief_days,
     set_refresh_token,
     set_subscribed,
+    set_task_feedback,
+    upsert_projects,
+    upsert_tasks,
     upsert_user,
-    update_user_snapshot,
 )
 from core.jobs import run_brief, schedule_brief
 from core.mailer import send_issue_report
 from core.ontrack import (
     RefreshTokenError,
     TokenManager,
-    TokenExpiredError,
-    fetch_active_projects_direct,
-    fetch_last_feedback_direct,
-    fetch_tasks_direct,
     mint_auth_token,
-    new_session,
+)
+from core.ontrack.fetcher import (
+    _append_missing_tasks,
+    _enrich_tasks,
+    _extract_latest_feedback,
 )
 from extensions import limiter, scheduler
 
@@ -52,20 +58,6 @@ def whoami():
     )
 
 
-def _stale_snapshot_response(db_user):
-    if db_user and db_user.get("last_snapshot"):
-        try:
-            data = json.loads(db_user["last_snapshot"])
-            data["is_stale"] = True
-            data["hint"] = "open_ontrack"
-            return data, 200
-        except Exception as exc:
-            log.warning(
-                "Failed to parse last_snapshot for %s: %s", db_user["username"], exc
-            )
-    return {"error": "token expired", "hint": "open_ontrack"}, 401
-
-
 @main_bp.route("/")
 def index():
     return "OnTrack Brief API is running."
@@ -80,6 +72,9 @@ def _process_user_setup(data: dict) -> tuple[int | None, tuple[dict, int] | None
         brief_hour = max(0, min(23, int(data.get("brief_hour", 8))))
         recently_days = max(1, int(data.get("recently_completed_days", 7)))
         max_todo = max(1, int(data.get("max_todo_tasks", 10)))
+        # The extension sends brief_days as weeks*7; the brief window is 1 or 2
+        # weeks, so clamp to [7, 14] with 14 the long-standing default.
+        brief_days = 7 if int(data.get("brief_days", 14)) <= 7 else 14
     except (ValueError, TypeError):
         return None, ({"ok": False, "error": "invalid numbers"}, 400)
 
@@ -123,6 +118,7 @@ def _process_user_setup(data: dict) -> tuple[int | None, tuple[dict, int] | None
         recently_completed_days=recently_days,
         max_todo_tasks=max_todo,
     )
+    set_brief_days(username, brief_days)
     schedule_brief(user_id, brief_hour)
     return user_id, None
 
@@ -259,6 +255,109 @@ def refresh_credential():
     return {"ok": True}
 
 
+@main_bp.route("/ingest", methods=["POST"])
+@limiter.limit("120 per minute")
+def ingest():
+    """Receive OnTrack data captured off the student's own session and store it.
+
+    The morning brief (and the extension strip) read these rows instead of calling
+    OnTrack — so there is no token, mint, or re-auth path here. Identity is the
+    body-supplied username, the same trust model as /refresh-token: the payload is
+    course data, not a credential, and the worst case is a known-username user's
+    task list being poisoned. Incremental and idempotent — the extension pushes one
+    fragment at a time as the student navigates; each kind upserts independently.
+
+    Body: { username, kind, payload }
+      kind="projects"       payload = raw /api/projects list
+      kind="project_tasks"  payload = { project_id, unit_code?, tasks, task_definitions }
+      kind="feedback"       payload = { project_id, task_def_id, comments, student_id? }
+    """
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    kind = data.get("kind")
+    payload = data.get("payload") or {}
+    log.info("ingest: kind=%s username=%s", kind, username)
+    if not username or not kind:
+        return {"ok": False, "error": "missing fields"}, 400
+
+    user = get_user_by_username(username)
+    if not user:
+        log.warning("ingest: no user row for username=%s — capture dropped", username)
+        return {"ok": False, "error": "not subscribed"}, 404
+    user_id = user["id"]
+    today = date.today()
+
+    # A live push proves the OnTrack session is alive — clear any rotation-race
+    # strikes, the same signal /refresh-token uses.
+    was_invalid = not user.get("token_valid", 1)
+    reset_token_fail(user["email"])
+    if was_invalid:
+        # User's token_valid=0 flag may have been set by the old polling code,
+        # which also removed their brief job. Restore it here so a pure-ingest
+        # user isn't silently left without briefs until a server restart.
+        log.info("ingest: restoring brief job for %s (was token_invalid)", user["email"])
+        schedule_brief(user_id, user["brief_hour"])
+
+    if kind == "projects":
+        if not isinstance(payload, list):
+            return {"ok": False, "error": "payload must be a list"}, 400
+        projects = []
+        for p in payload:
+            unit = p.get("unit") or {}
+            end_date = unit.get("end_date")
+            if end_date and end_date < today.isoformat():
+                continue  # ended unit — let the prune drop any stragglers
+            projects.append(
+                {
+                    "project_id": p.get("id"),
+                    "unit_code": unit.get("code"),
+                    "unit_name": unit.get("name"),
+                    "unit_end_date": end_date,
+                }
+            )
+        projects = [p for p in projects if p["project_id"] is not None]
+        stored = upsert_projects(user_id, projects)
+        prune_ended_projects(user_id, today.isoformat())
+        return {"ok": True, "stored": stored}
+
+    if kind == "project_tasks":
+        project_id = payload.get("project_id")
+        if project_id is None:
+            return {"ok": False, "error": "missing project_id"}, 400
+        # Guard: _enrich_tasks and _append_missing_tasks both use
+        # t["task_definition_id"] (hard key access). Drop any task dicts the
+        # extension sent without that field before passing them in.
+        tasks = [
+            t for t in (payload.get("tasks") or [])
+            if t.get("task_definition_id") is not None
+        ]
+        task_defs = payload.get("task_definitions") or []
+        # Same enrichment the server-pull path uses — resolve deadlines and
+        # synthesise not-yet-started tasks — but run once here, against fresh data.
+        _enrich_tasks(tasks, task_defs)
+        _append_missing_tasks(tasks, task_defs)
+        # DB lookup wins over client-supplied unit_code so the extension can't
+        # inject an arbitrary label; fall back to the payload when the project row
+        # hasn't been upserted yet.
+        unit_code = get_unit_code(user_id, project_id) or payload.get("unit_code") or ""
+        stored = upsert_tasks(user_id, project_id, unit_code, tasks)
+        return {"ok": True, "stored": stored}
+
+    if kind == "feedback":
+        project_id = payload.get("project_id")
+        task_def_id = payload.get("task_def_id")
+        if project_id is None or task_def_id is None:
+            return {"ok": False, "error": "missing ids"}, 400
+        comments = payload.get("comments")
+        text = _extract_latest_feedback(comments, payload.get("student_id"))
+        if not text:
+            return {"ok": True, "stored": 0}
+        updated = set_task_feedback(user_id, project_id, task_def_id, text)
+        return {"ok": True, "stored": 1 if updated else 0}
+
+    return {"ok": False, "error": f"unknown kind: {kind}"}, 400
+
+
 @main_bp.route("/link-ontrack", methods=["POST"])
 @limiter.limit("10 per minute")
 @require_clerk_auth
@@ -383,13 +482,17 @@ def link_ontrack():
 @limiter.limit("60 per minute")
 @require_clerk_auth
 def api_snapshot():
+    """Live strip for the extension — now served entirely from captured data.
+
+    No OnTrack call: the strip reads the same stored tasks the morning brief does,
+    so the two match by construction and the popup opens instantly. The data is
+    populated by the extension's own /ingest pushes while the student is on OnTrack.
+    """
     data = request.get_json(silent=True) or {}
-    base_url = (data.get("base_url") or "https://ontrack.deakin.edu.au").rstrip("/")
     days_count = min(14, max(1, int(data.get("days", 7))))
 
     # Identity comes only from the verified Clerk session — no body-supplied
-    # username. Resolve by clerk_user_id, claiming a legacy row by verified
-    # email on first sign-in. The server already holds the OnTrack token.
+    # username. Resolve by clerk_user_id, claiming a legacy row by verified email.
     clerk_id = g.clerk_user_id
     clerk_email = (g.clerk_claims or {}).get("email")
     db_user = get_user_by_clerk_id(clerk_id)
@@ -398,175 +501,77 @@ def api_snapshot():
     if not db_user:
         return {"error": "not_linked", "hint": "link_ontrack"}, 404
 
+    user_id = db_user["id"]
     username = db_user["username"]
-    auth_token = db_user["auth_token"]
-    base_url = db_user["base_url"] or base_url
+    base_url = (db_user["base_url"] or "https://ontrack.deakin.edu.au").rstrip("/")
     log.info("api_snapshot: %s (clerk %s)", username, clerk_id)
 
-    # Dedicated TokenManager so token capture doesn't interfere with brief jobs.
-    tm = TokenManager(base_url, username, auth_token)
-
-    # Prefer minting a fresh auth_token from the durable refresh_token — the same
-    # path the brief uses. The scraped auth_token goes stale between OnTrack visits,
-    # which is why the popup kept showing "session expired"; minting fixes that.
-    # Only an expired refresh_token is a real "open OnTrack to refresh" signal.
-    refresh_token = db_user.get("refresh_token")
-    if refresh_token:
-        try:
-            tm.token, _ = mint_auth_token(
-                base_url, refresh_token, username, session=tm.session
-            )
-            tm.persist(db_user)  # keep the stored token warm
-        except RefreshTokenError:
-            log.info("api_snapshot: refresh_token expired for %s", username)
-            return _stale_snapshot_response(db_user)
-        except Exception as exc:
-            log.warning("api_snapshot: OnTrack unreachable minting for %s: %s", username, exc)
-            return {"error": "OnTrack unreachable"}, 503
-    else:
-        # Legacy users with no refresh_token yet: validate the scraped token.
-        try:
-            valid = tm.validate()
-        except Exception as exc:
-            log.warning("api_snapshot: OnTrack unreachable for %s: %s", username, exc)
-            return {"error": "OnTrack unreachable"}, 503
-        if not valid:
-            log.warning(
-                "api_snapshot: token rejected by OnTrack for %s — open OnTrack to refresh",
-                username,
-            )
-            return _stale_snapshot_response(db_user)
-
-    try:
-        projects, tm.token = fetch_active_projects_direct(
-            tm.base_url, tm.token, tm.username, session=tm.session
-        )
-    except TokenExpiredError:
-        return _stale_snapshot_response(db_user)
-    except Exception as exc:
-        log.warning("api_snapshot: fetch_projects failed for %s: %s", username, exc)
-        return {"error": "could not fetch projects"}, 502
-
     today = date.today()
-    ACTIVE = URGENT | TODO | WAITING
-    FEEDBACK_STATUSES = URGENT | TODO | WAITING | SUBMITTED
-    feedback_entries = []
-    feedback_checks = 0
-    student_id = None
-    if projects:
-        user = projects[0].get("user") or {}
-        student_id = user.get("id")
+    days = [
+        {
+            "offset": offset,
+            "date": (today + timedelta(days=offset)).isoformat(),
+            "label": (today + timedelta(days=offset)).strftime("%a"),
+            "tasks": [],
+        }
+        for offset in range(days_count)
+    ]
 
-    date_index = {}
-    days = []
-    for offset in range(days_count):
-        d = today + timedelta(days=offset)
-        iso = d.isoformat()
-        date_index[iso] = offset
-        days.append(
-            {"offset": offset, "date": iso, "label": d.strftime("%a"), "tasks": []}
+    # Bucket captured pending tasks by their day offset. Same HIDE_SET as the brief
+    # (submitted/done/discuss/demonstrate dropped), so strip == email.
+    end = today + timedelta(days=days_count - 1)
+    task_count, last_seen = get_capture_meta(user_id)
+    for r in get_pending_tasks(user_id, today.isoformat(), end.isoformat()):
+        if is_hidden(r):
+            continue
+        try:
+            offset = (date.fromisoformat(r["deadline"]) - today).days
+        except (ValueError, TypeError):
+            continue
+        if not 0 <= offset < days_count:
+            continue
+        abbrev = r.get("abbreviation") or ""
+        days[offset]["tasks"].append(
+            {
+                "name": r.get("name") or abbrev,
+                "abbreviation": abbrev,
+                "unit": r.get("unit_code") or "",
+                "grade": r.get("target_grade_label") or "P (Pass)",
+                "due_date": r["deadline"],
+                "url": f"{base_url}/projects/{r['project_id']}/dashboard/{abbrev}",
+            }
         )
 
-    # Fetch every project's tasks concurrently — they're independent I/O. Each
-    # worker uses its own session and the minted token read-only (no rotation
-    # capture needed mid-snapshot), so nothing mutable is shared across threads.
-    def _load_tasks(project: dict) -> tuple[dict, list | None]:
-        try:
-            tasks = fetch_tasks_direct(
-                tm.base_url,
-                tm.token,
-                tm.username,
-                project["id"],
-                session=new_session(),
-            )
-            return project, tasks
-        except Exception as exc:
-            log.warning(
-                "api_snapshot: fetch_tasks failed project %s: %s", project["id"], exc
-            )
-            return project, None
-
-    with ThreadPoolExecutor(max_workers=min(8, len(projects) or 1)) as pool:
-        project_tasks = list(pool.map(_load_tasks, projects))
-
-    # Build the strip from every project (preserving order). Now that all tasks
-    # are fetched up front, the strip is complete — it no longer truncates once
-    # the feedback caps are hit (the old sequential loop broke out early).
-    for project, tasks in project_tasks:
-        if not tasks:
-            continue
-        project_id = project["id"]
-        unit_code = project["unit"]["code"]
-        for task in tasks:
-            if task.get("status") not in ACTIVE:
-                continue
-            due = (task.get("due_date") or "")[:10]
-            if due not in date_index:
-                continue
-            abbrev = task.get("abbreviation", "")
-            days[date_index[due]]["tasks"].append(
-                {
-                    "name": task.get("name", abbrev),
-                    "abbreviation": abbrev,
-                    "unit": unit_code,
-                    "grade": task.get("target_grade_label", "P (Pass)"),
-                    "due_date": due,
-                    "url": f"{base_url}/projects/{project_id}/dashboard/{abbrev}",
-                }
-            )
-
-    # Gather a few recent tutor feedback notes (sequential + capped). These extra
-    # /comments calls are the next thing to parallelise — see FUTURE_IDEAS.
-    for project, tasks in project_tasks:
-        if len(feedback_entries) >= 3 or feedback_checks >= 8:
-            break
-        if not tasks:
-            continue
-        project_id = project["id"]
-        unit_code = project["unit"]["code"]
-        for task in tasks:
-            if task.get("status") not in FEEDBACK_STATUSES:
-                continue
-            if len(feedback_entries) >= 3 or feedback_checks >= 8:
-                break
-            feedback_checks += 1
-            text = fetch_last_feedback_direct(
-                tm.base_url,
-                tm.token,
-                tm.username,
-                project_id,
-                task.get("task_definition_id"),
-                student_id,
-                session=tm.session,
-            )
-            if not text:
-                continue
-            trimmed = " ".join(text.split())
-            if len(trimmed) > 220:
-                trimmed = trimmed[:217].rstrip() + "..."
-            abbrev = task.get("abbreviation", "")
-            feedback_entries.append(
-                {
-                    "unit": unit_code,
-                    "task": task.get("name", abbrev) or abbrev,
-                    "text": trimmed,
-                    "url": f"{base_url}/projects/{project_id}/dashboard/{abbrev}",
-                }
-            )
+    feedback_entries = []
+    for r in get_feedback_entries(user_id, limit=3):
+        abbrev = r.get("abbreviation") or ""
+        trimmed = " ".join((r.get("feedback_text") or "").split())
+        if len(trimmed) > 220:
+            trimmed = trimmed[:217].rstrip() + "..."
+        feedback_entries.append(
+            {
+                "unit": r.get("unit_code") or "",
+                "task": r.get("name") or abbrev,
+                "text": trimmed,
+                "url": f"{base_url}/projects/{r['project_id']}/dashboard/{abbrev}",
+            }
+        )
 
     response_data = {
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        # None when no data has been captured yet — avoids a misleading "just now"
+        # timestamp on a cold-start response.
+        "generated_at": last_seen,
+        "has_data": task_count > 0,
         "days": days,
         "feedback": feedback_entries,
-        "subscribed": bool(db_user.get("subscribed", 1)) if db_user else True,
-        "auth_token": tm.token,
+        "subscribed": bool(db_user.get("subscribed", 1)),
     }
-
-    if db_user:
-        # Don't persist the rotating token inside the snapshot — it's a credential
-        # at rest, and a stale snapshot must never hand back an outdated token.
-        stored = {k: v for k, v in response_data.items() if k != "auth_token"}
-        update_user_snapshot(username, json.dumps(stored))
+    # No captured data yet (student hasn't opened OnTrack with the extension since
+    # linking) — flag it so the popup can nudge them, same hint the old token-stale
+    # path used.
+    if task_count == 0:
+        response_data["is_stale"] = True
+        response_data["hint"] = "open_ontrack"
 
     return response_data
 
