@@ -6,6 +6,7 @@ import logging
 import os
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 
 from core.crypto import decrypt as _decrypt, encrypt as _encrypt
@@ -81,6 +82,7 @@ def init_db() -> None:
                     subscribed              INTEGER NOT NULL DEFAULT 1,
                     recently_completed_days INTEGER NOT NULL DEFAULT 7,
                     max_todo_tasks          INTEGER NOT NULL DEFAULT 10,
+                    brief_days              INTEGER NOT NULL DEFAULT 14,
                     last_snapshot           TEXT,
                     created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
                 )
@@ -90,6 +92,7 @@ def init_db() -> None:
                 ("token_valid", "INTEGER NOT NULL DEFAULT 1"),
                 ("recently_completed_days", "INTEGER NOT NULL DEFAULT 7"),
                 ("max_todo_tasks", "INTEGER NOT NULL DEFAULT 10"),
+                ("brief_days", "INTEGER NOT NULL DEFAULT 14"),
                 ("last_snapshot", "TEXT"),
                 ("clerk_user_id", "TEXT"),
                 ("token_fail_count", "INTEGER NOT NULL DEFAULT 0"),
@@ -128,6 +131,7 @@ def init_db() -> None:
                     subscribed              INTEGER NOT NULL DEFAULT 1,
                     recently_completed_days INTEGER NOT NULL DEFAULT 7,
                     max_todo_tasks          INTEGER NOT NULL DEFAULT 10,
+                    brief_days              INTEGER NOT NULL DEFAULT 14,
                     last_snapshot           TEXT,
                     created_at              TEXT NOT NULL DEFAULT (datetime('now'))
                 )
@@ -138,6 +142,7 @@ def init_db() -> None:
                 ("token_valid", "INTEGER NOT NULL DEFAULT 1"),
                 ("recently_completed_days", "INTEGER NOT NULL DEFAULT 7"),
                 ("max_todo_tasks", "INTEGER NOT NULL DEFAULT 10"),
+                ("brief_days", "INTEGER NOT NULL DEFAULT 14"),
                 ("last_snapshot", "TEXT"),
                 ("clerk_user_id", "TEXT"),
                 ("token_fail_count", "INTEGER NOT NULL DEFAULT 0"),
@@ -152,6 +157,44 @@ def init_db() -> None:
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_clerk_user_id "
                 "ON users(clerk_user_id)"
             )
+
+        # Deterministic-brief tables (see docs/DETERMINISTIC_BRIEF_PLAN.md). The
+        # extension captures OnTrack data off the student's own session and pushes
+        # it here via /ingest; the morning brief reads these rows instead of calling
+        # OnTrack. The column types below are valid on both PG and SQLite, so a
+        # single DDL serves both engines (no at-rest credentials here → no encryption).
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS projects (
+                user_id        INTEGER NOT NULL,
+                project_id     INTEGER NOT NULL,
+                unit_code      TEXT,
+                unit_name      TEXT,
+                unit_end_date  TEXT,
+                last_seen      TEXT NOT NULL,
+                PRIMARY KEY (user_id, project_id)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                user_id            INTEGER NOT NULL,
+                project_id         INTEGER NOT NULL,
+                task_def_id        INTEGER NOT NULL,
+                abbreviation       TEXT,
+                name               TEXT,
+                unit_code          TEXT,
+                target_grade_label TEXT,
+                deadline           TEXT,
+                status             TEXT,
+                feedback_text      TEXT,
+                feedback_seen_at   TEXT,
+                last_seen          TEXT NOT NULL,
+                PRIMARY KEY (user_id, project_id, task_def_id)
+            )
+        """)
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_user_deadline "
+            "ON tasks(user_id, deadline)"
+        )
 
 
 def upsert_user(
@@ -312,6 +355,19 @@ def set_refresh_token(username: str, refresh_token: str) -> bool:
         return cur.rowcount > 0
 
 
+def set_brief_days(username: str, brief_days: int) -> bool:
+    """Set the per-user brief window (7 or 14 days). A standalone setter rather than
+    a new upsert_user param, so the token-refresh callers can't clobber it. Returns
+    True if a row was updated."""
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"UPDATE users SET brief_days = {_P} WHERE username = {_P}",
+            (brief_days, username),
+        )
+        return cur.rowcount > 0
+
+
 def set_subscribed(email: str, subscribed: bool) -> bool:
     """Flip the brief subscription on/off, keyed by email. Returns True if a row
     was updated. Unsubscribe is a reversible pause (this flag) — never a row
@@ -391,6 +447,194 @@ def remove_user(email: str) -> None:
     with _connection() as conn:
         cur = conn.cursor()
         cur.execute(f"DELETE FROM users WHERE email = {_P}", (email,))
+
+
+# ---------------------------------------------------------------------------
+# Deterministic-brief storage — captured OnTrack tasks/deadlines (no OnTrack call
+# at read time). See docs/DETERMINISTIC_BRIEF_PLAN.md. ON CONFLICT … DO UPDATE is
+# supported by both psycopg2 (PG) and sqlite3 (≥3.24), and `excluded` is spelled
+# the same on both, so a single query serves both engines.
+# ---------------------------------------------------------------------------
+
+
+def upsert_projects(user_id: int, projects: list[dict]) -> int:
+    """Upsert the student's active units. ``projects`` items carry
+    project_id, unit_code, unit_name, unit_end_date. Returns rows written."""
+    if not projects:
+        return 0
+    now = datetime.now().isoformat(timespec="seconds")
+    rows = [
+        (
+            user_id,
+            p["project_id"],
+            p.get("unit_code"),
+            p.get("unit_name"),
+            p.get("unit_end_date"),
+            now,
+        )
+        for p in projects
+    ]
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.executemany(
+            f"""
+            INSERT INTO projects
+                (user_id, project_id, unit_code, unit_name, unit_end_date, last_seen)
+            VALUES ({_P}, {_P}, {_P}, {_P}, {_P}, {_P})
+            ON CONFLICT (user_id, project_id) DO UPDATE SET
+                unit_code     = excluded.unit_code,
+                unit_name     = excluded.unit_name,
+                unit_end_date = excluded.unit_end_date,
+                last_seen     = excluded.last_seen
+            """,
+            rows,
+        )
+        return len(rows)
+
+
+def prune_ended_projects(user_id: int, today_iso: str) -> None:
+    """Drop units whose end_date has passed, and their tasks — keeps the store to
+    the student's *current* enrolment so the brief never surfaces a dead unit."""
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"""DELETE FROM tasks WHERE user_id = {_P} AND project_id IN
+                (SELECT project_id FROM projects
+                 WHERE user_id = {_P} AND unit_end_date IS NOT NULL
+                   AND unit_end_date < {_P})""",
+            (user_id, user_id, today_iso),
+        )
+        cur.execute(
+            f"""DELETE FROM projects WHERE user_id = {_P}
+                AND unit_end_date IS NOT NULL AND unit_end_date < {_P}""",
+            (user_id, today_iso),
+        )
+
+
+def upsert_tasks(user_id: int, project_id: int, unit_code: str, tasks: list[dict]) -> int:
+    """Upsert enriched task rows for one project. Leaves feedback_text/seen_at
+    untouched (those are captured separately), so a task sweep never wipes feedback.
+    ``tasks`` are the dicts produced by core.ontrack.fetcher._enrich_tasks."""
+    if not tasks:
+        return 0
+    now = datetime.now().isoformat(timespec="seconds")
+    rows = [
+        (
+            user_id,
+            project_id,
+            t["task_definition_id"],
+            t.get("abbreviation"),
+            t.get("name"),
+            unit_code,
+            t.get("target_grade_label"),
+            t.get("due_date"),
+            t.get("status"),
+            now,
+        )
+        for t in tasks
+        if t.get("task_definition_id") is not None
+    ]
+    if not rows:
+        return 0
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.executemany(
+            f"""
+            INSERT INTO tasks
+                (user_id, project_id, task_def_id, abbreviation, name, unit_code,
+                 target_grade_label, deadline, status, last_seen)
+            VALUES ({_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P}, {_P})
+            ON CONFLICT (user_id, project_id, task_def_id) DO UPDATE SET
+                abbreviation       = excluded.abbreviation,
+                name               = excluded.name,
+                unit_code          = excluded.unit_code,
+                target_grade_label = excluded.target_grade_label,
+                deadline           = excluded.deadline,
+                status             = excluded.status,
+                last_seen          = excluded.last_seen
+            """,
+            rows,
+        )
+        return len(rows)
+
+
+def set_task_feedback(
+    user_id: int, project_id: int, task_def_id: int, text: str
+) -> bool:
+    """Store the latest tutor feedback for one task. Update-only: if the task row
+    isn't captured yet, the next task sweep will create it and feedback re-lands."""
+    now = datetime.now().isoformat(timespec="seconds")
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"""UPDATE tasks SET feedback_text = {_P}, feedback_seen_at = {_P}
+                WHERE user_id = {_P} AND project_id = {_P} AND task_def_id = {_P}""",
+            (text, now, user_id, project_id, task_def_id),
+        )
+        return cur.rowcount > 0
+
+
+def get_capture_meta(user_id: int) -> tuple[int, str | None]:
+    """Return (task_count, latest_capture_iso) for a user. Drives the brief's
+    cold-start guard (count == 0 → no data yet, don't send) and the "as of" stamp."""
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT COUNT(*), MAX(last_seen) FROM tasks WHERE user_id = {_P}",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        return (row[0] or 0, row[1]) if row else (0, None)
+
+
+def get_feedback_entries(user_id: int, limit: int = 3) -> list[dict]:
+    """Most recently captured tutor feedback for a user (for the extension strip)."""
+    with _connection() as conn:
+        if _USE_PG:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        else:
+            cur = conn.cursor()
+        cur.execute(
+            f"""SELECT project_id, abbreviation, name, unit_code, feedback_text
+                FROM tasks
+                WHERE user_id = {_P} AND feedback_text IS NOT NULL AND feedback_text <> ''
+                ORDER BY feedback_seen_at DESC
+                LIMIT {_P}""",
+            (user_id, limit),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def get_unit_code(user_id: int, project_id: int) -> str | None:
+    """Look up a stored project's unit_code (for labelling task rows when the
+    project_tasks ingest arrives before/without the projects list)."""
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT unit_code FROM projects WHERE user_id = {_P} AND project_id = {_P}",
+            (user_id, project_id),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def get_pending_tasks(user_id: int, today_iso: str, end_iso: str) -> list[dict]:
+    """Tasks due in the inclusive window [today, end], ordered by deadline. Status
+    filtering (HIDE_SET) is applied by the brief layer, not here — this just bounds
+    the window and uses the (user_id, deadline) index."""
+    with _connection() as conn:
+        if _USE_PG:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        else:
+            cur = conn.cursor()
+        cur.execute(
+            f"""SELECT * FROM tasks
+                WHERE user_id = {_P} AND deadline IS NOT NULL
+                  AND deadline >= {_P} AND deadline <= {_P}
+                ORDER BY deadline ASC""",
+            (user_id, today_iso, end_iso),
+        )
+        return [dict(r) for r in cur.fetchall()]
 
 
 def get_sqlalchemy_url() -> str:
