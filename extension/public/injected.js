@@ -6,6 +6,7 @@
 (function () {
   let lastToken    = null;
   let lastUsername = null;
+  let _swept       = false; // only sweep once per page load
 
   function emit(token, username) {
     if (!token || !username) return;
@@ -72,6 +73,27 @@
     }
   }
 
+  // After the projects list is captured, proactively fetch every project's task
+  // data + unit definitions so the brief has full coverage without the student
+  // needing to click into each unit. Uses the already-captured auth token.
+  // Guard (_swept) prevents re-triggering on subsequent project-list refreshes.
+  function sweepProjectTasks(projects) {
+    if (_swept || !lastToken || !lastUsername) return;
+    _swept = true;
+    const headers = {
+      "Auth-Token": lastToken,
+      "Username": lastUsername,
+      "Accept": "application/json",
+    };
+    projects.forEach(function (proj) {
+      if (!proj.id) return;
+      const url = `${location.origin}/api/projects/${proj.id}`;
+      // Use window.fetch (our overridden version) so the response flows through
+      // handleData automatically — no manual wiring needed.
+      window.fetch(url, { headers }).catch(function () {});
+    });
+  }
+
   function handleData(rawUrl, data) {
     const p = pathOf(rawUrl);
     let m;
@@ -81,12 +103,23 @@
         lastStudentId = data[0].user.id;
       }
       emitData("projects", data);
+      sweepProjectTasks(data);
     } else if ((m = p.match(/^\/api\/projects\/(\d+)$/))) {
       const unitId = data.unit_id || (data.unit && data.unit.id);
       if (unitId == null) return;
       const tasks = data.tasks || [];
       tasksByUnit[unitId] = { project_id: Number(m[1]), tasks };
       maybeEmitProjectTasks(unitId);
+      // Fetch unit task definitions if we don't have them yet.
+      if (!defsByUnit[unitId] && lastToken && lastUsername) {
+        window.fetch(`${location.origin}/api/units/${unitId}`, {
+          headers: {
+            "Auth-Token": lastToken,
+            "Username": lastUsername,
+            "Accept": "application/json",
+          },
+        }).catch(function () {});
+      }
     } else if ((m = p.match(/^\/api\/units\/(\d+)$/))) {
       defsByUnit[Number(m[1])] = data.task_definitions || [];
       maybeEmitProjectTasks(Number(m[1]));
@@ -125,17 +158,6 @@
         emit(h["auth-token"], h["username"]);
       }
 
-      // TEMP diagnostic: log every /api/ call so we can see the real paths +
-      // responseType and whether our matcher catches them. Remove once confirmed.
-      if (this._url && String(this._url).indexOf("/api/") !== -1) {
-        console.log(
-          "[OnTrack Brief] api",
-          this.responseType || "(text)",
-          isDataUrl(this._url) ? "MATCH" : "skip",
-          this._url
-        );
-      }
-
       // Capture the response body for the data endpoints we care about.
       // Angular's HttpClient sets responseType="json", and reading responseText
       // THROWS in that mode — so prefer the already-parsed `this.response` and only
@@ -150,10 +172,7 @@
           } else if (rt === "" || rt === "text") {
             body = JSON.parse(this.responseText);
           }
-          if (body != null) {
-            console.log("[OnTrack Brief] captured", this._url);
-            handleData(this._url, body);
-          }
+          if (body != null) handleData(this._url, body);
         }
       } catch (e) { /* non-JSON / unreadable body — ignore */ }
     });
