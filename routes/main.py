@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import date, datetime, timedelta
 
 import requests
@@ -56,6 +57,14 @@ def whoami():
             "email": (g.clerk_claims or {}).get("email"),
         }
     )
+
+
+@main_bp.route("/api/version")
+def api_version():
+    """Returns the minimum extension version required to use the service.
+    Set MIN_EXTENSION_VERSION env var to force an update prompt for old builds."""
+    min_required = os.environ.get("MIN_EXTENSION_VERSION", "1.9")
+    return jsonify({"min_required": min_required})
 
 
 @main_bp.route("/")

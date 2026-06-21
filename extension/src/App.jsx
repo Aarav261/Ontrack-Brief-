@@ -8,9 +8,23 @@ import SnapshotView from './components/SnapshotView'
 import Settings from './components/Settings'
 import ReportIssue from './components/ReportIssue'
 import Footer from './components/Footer'
+import UpdateRequired from './components/UpdateRequired'
 import { api } from './lib/api'
 import { syncLabel } from './utils/time'
 import { SNAPSHOT_KEY, SNAPSHOT_TTL_MS, DEFAULT_BASE_URL } from './constants'
+
+// Returns true if `current` is at least `required` (both dot-separated strings).
+function versionAtLeast(current, required) {
+  const a = String(current).split('.').map(Number)
+  const b = String(required).split('.').map(Number)
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const ai = a[i] ?? 0
+    const bi = b[i] ?? 0
+    if (ai > bi) return true
+    if (ai < bi) return false
+  }
+  return true
+}
 
 export default function App() {
   const { isLoaded, isSignedIn, getToken } = useAuth()
@@ -23,8 +37,22 @@ export default function App() {
   const [subscribed, setSubscribed] = useState(true)
   const [stripLoading, setStripLoading] = useState(false)
   const [footerSync, setFooterSync] = useState('')
+  const [minVersion, setMinVersion] = useState(null)
   const snapshotAuthRef = useRef(null)
   const didInitRef = useRef(false)
+
+  const currentVersion = chrome.runtime.getManifest().version
+
+  useEffect(() => {
+    fetch(`${window.APP_URL}/api/version`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.min_required && !versionAtLeast(currentVersion, d.min_required)) {
+          setMinVersion(d.min_required)
+        }
+      })
+      .catch(() => {})
+  }, [])
 
   const setStatus = useCallback((type, text) => {
     setStatusType(type)
@@ -236,6 +264,10 @@ export default function App() {
     })
 
   const username = storageData?.username || ''
+
+  if (minVersion) {
+    return <UpdateRequired currentVersion={currentVersion} minRequired={minVersion} />
+  }
 
   return (
     <>
