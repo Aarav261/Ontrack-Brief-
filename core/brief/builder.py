@@ -21,6 +21,11 @@ from core.ontrack.fetcher import _api_auth
 HIDE_SET = SUBMITTED | DONE | WAITING
 
 
+def is_hidden(row: dict) -> bool:
+    """Return True if this task row should be suppressed from the brief and strip."""
+    return (row.get("status") or "") in HIDE_SET
+
+
 def pending_task_entries(rows: list[dict], today: date, base_url: str) -> list[dict]:
     """Convert captured task rows (already date-windowed by db.get_pending_tasks)
     into renderer entries, dropping handed-in/resolved statuses. Pure and
@@ -32,7 +37,7 @@ def pending_task_entries(rows: list[dict], today: date, base_url: str) -> list[d
     base = (base_url or "").rstrip("/")
     entries: list[dict] = []
     for r in rows:
-        if (r.get("status") or "") in HIDE_SET:
+        if is_hidden(r):
             continue
         deadline = r.get("deadline")
         if not deadline:

@@ -128,9 +128,6 @@ def startup() -> None:
 
     try:
         for user in get_all_users():
-            if not user.get("token_valid", 1):
-                log.info("Skipping schedule for %s — token invalid", user["username"])
-                continue
             if not user.get("subscribed", 1):
                 log.info("Skipping schedule for %s — unsubscribed (paused)", user["username"])
                 continue

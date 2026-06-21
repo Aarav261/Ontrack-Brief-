@@ -81,20 +81,7 @@ def send_briefs_enabled_email(recipient: str) -> bool:
     return _send(html, subject, recipient, kind="Briefs-enabled")
 
 
-def send_reauth_email(recipient: str, app_url: str) -> bool:
-    body = """
-<p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:#3a3a3a">
-  Your OnTrack session has expired. To keep receiving your daily briefs, open the
-  <strong>OnTrack Brief</strong> Chrome extension and log into OnTrack &mdash; your
-  session refreshes automatically.
-</p>
-<p style="margin:0;font-size:13px;line-height:1.6;color:#9a9a9a">
-  You don&rsquo;t need to stay logged in to OnTrack &mdash; just don&rsquo;t click
-  <em>Log Out</em>.
-</p>"""
-    html = render_email("Re-authentication needed", body)
-    subject = "OnTrack Brief — Re-authentication needed"
-    return _send(html, subject, recipient, kind="Re-auth")
+
 
 
 def send_issue_report(
