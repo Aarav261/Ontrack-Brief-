@@ -137,9 +137,9 @@ export default function Settings({
         {msg && <div className={`msg ${msg.type}`}>{msg.text}</div>}
 
         {subscribed && (
-          <div className="unsubscribe">
-            <a onClick={handleUnsubscribe}>Unsubscribe</a>
-          </div>
+          <button className="disconnect-btn" onClick={handleUnsubscribe}>
+            Disconnect brief
+          </button>
         )}
       </div>
     </div>

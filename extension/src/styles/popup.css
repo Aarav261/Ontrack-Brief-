@@ -703,20 +703,23 @@ body {
   background: #fee2e2;
   color: #991b1b;
 }
-.unsubscribe {
-  text-align: center;
-  margin-top: 14px;
-  font-size: 11px;
-  color: #aaa;
-}
-.unsubscribe a {
-  color: #4361ee;
-  text-decoration: none;
+.disconnect-btn {
+  width: 100%;
+  padding: 12px;
+  background: #fff;
+  color: #dc2626;
+  border: 1px solid #dc2626;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: 'Lora', Georgia, 'Times New Roman', serif;
   cursor: pointer;
-  font-weight: 600;
+  margin-top: 10px;
+  transition: background 0.15s, color 0.15s;
 }
-.unsubscribe a:hover {
-  text-decoration: underline;
+.disconnect-btn:hover {
+  background: #dc2626;
+  color: #fff;
 }
 
 /* ── Footer ──────────────────────────────────────────────── */

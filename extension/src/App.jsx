@@ -214,6 +214,21 @@ export default function App() {
     setStorageData((prev) => ({ ...prev, brief_weeks: String(weeks) }))
   }
 
+  // Keep the cached snapshot's subscribed flag in sync with an in-session
+  // change. Without this, reopening the popup paints the stale cached value
+  // (and skips the revalidate while the cache is fresh), so a just-disconnected
+  // user would still see the "Disconnect brief" button.
+  const patchCachedSubscribed = (value) => {
+    chrome.storage.local.get([SNAPSHOT_KEY], (stored) => {
+      const cached = stored[SNAPSHOT_KEY]
+      if (cached?.data) {
+        chrome.storage.local.set({
+          [SNAPSHOT_KEY]: { ...cached, data: { ...cached.data, subscribed: value } },
+        })
+      }
+    })
+  }
+
   // Persist brief settings against the Clerk-linked account (email is sourced
   // from Clerk server-side, so it's no longer entered here).
   const handleSaveSettings = ({ hour, briefWeeks }) =>
@@ -244,6 +259,7 @@ export default function App() {
             chrome.storage.local.set({ brief_hour: hour, brief_weeks: briefWeeks })
             setStorageData((prev) => ({ ...prev, brief_hour: hour }))
             setSubscribed(true) // enabling/saving (re)activates the subscription
+            patchCachedSubscribed(true)
             resolve()
           })
           .catch(reject)
@@ -253,6 +269,7 @@ export default function App() {
   const handleUnsubscribe = () =>
     api('/unsubscribe', { method: 'POST', getToken }).then(() => {
       setSubscribed(false)
+      patchCachedSubscribed(false)
       setStatus('warning', 'Briefs paused — re-enable them any time.')
     })
 
