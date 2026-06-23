@@ -391,6 +391,12 @@ def link_ontrack():
         brief_hour = max(0, min(23, int(data.get("brief_hour", 8))))
         recently_days = max(1, int(data.get("recently_completed_days", 7)))
         max_todo = max(1, int(data.get("max_todo_tasks", 10)))
+        # The extension sends brief_days as weeks*7; clamp to [7, 14] (same as
+        # /setup). Only present on a deliberate Settings save — the auto re-link
+        # on every popup open omits it, so we must not reset the user's choice.
+        brief_days = None
+        if "brief_days" in data:
+            brief_days = 7 if int(data.get("brief_days", 14)) <= 7 else 14
     except (ValueError, TypeError):
         return {"ok": False, "error": "invalid numbers"}, 400
 
@@ -453,6 +459,11 @@ def link_ontrack():
     # closes the chicken-and-egg with /refresh-credential for first-time users.
     if body_refresh_token:
         set_refresh_token(username, body_refresh_token)
+
+    # Apply a deliberate brief-window change from the Settings panel. Guarded on
+    # presence above so the auto re-link doesn't clobber a saved 7/14-day choice.
+    if brief_days is not None:
+        set_brief_days(username, brief_days)
 
     # An explicit "Enable email briefs" click resumes a paused subscription.
     if send_now:
