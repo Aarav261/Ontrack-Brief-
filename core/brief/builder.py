@@ -4,14 +4,11 @@ from __future__ import annotations
 
 from datetime import date
 
-from core.constants import GRADE_WEIGHT, URGENT, TODO, WAITING, SUBMITTED, DONE
+from core.constants import DONE, GRADE_WEIGHT, SUBMITTED, TODO, URGENT, WAITING
 from core.ontrack import (
-    fetch_tasks,
-    fetch_last_feedback,
-    fetch_tasks_direct,
     fetch_last_feedback_direct,
+    fetch_tasks_direct,
 )
-from core.ontrack.fetcher import _api_auth
 
 # Statuses kept OUT of the deterministic brief: work already handed in (SUBMITTED),
 # resolved (DONE), or handled face-to-face (WAITING = discuss/demonstrate, which we
@@ -47,11 +44,7 @@ def pending_task_entries(rows: list[dict], today: date, base_url: str) -> list[d
         except ValueError:
             continue
         abbrev = r.get("abbreviation") or ""
-        url = (
-            f"{base}/projects/{r['project_id']}/dashboard/{abbrev}"
-            if base and abbrev
-            else None
-        )
+        url = f"{base}/projects/{r['project_id']}/dashboard/{abbrev}" if base and abbrev else None
         entries.append(
             {
                 "task": {
@@ -123,18 +116,12 @@ def _build_brief(
         unit_code = project["unit"]["code"]
 
         for task in task_fetcher(project_id):
-            task["_url"] = (
-                f"{base_url}/projects/{project_id}/dashboard/{task['abbreviation']}"
-            )
+            task["_url"] = f"{base_url}/projects/{project_id}/dashboard/{task['abbreviation']}"
             status = task["status"]
 
             if status in DONE:
                 comp = task.get("completion_date")
-                if (
-                    comp
-                    and (today - date.fromisoformat(comp)).days
-                    <= recently_completed_days
-                ):
+                if comp and (today - date.fromisoformat(comp)).days <= recently_completed_days:
                     done.append((task, unit_code, None))
             elif status in URGENT:
                 feedback = feedback_fetcher(project_id, task["task_definition_id"])
@@ -163,24 +150,6 @@ def _build_brief(
     }
 
 
-def build_brief(projects: list[dict], recently_completed_days: int = 7) -> dict:
-    base_url, _, _ = _api_auth()
-
-    def task_fetcher(project_id: int) -> list[dict]:
-        return fetch_tasks(project_id)
-
-    def feedback_fetcher(project_id: int, task_def_id: int) -> str | None:
-        return fetch_last_feedback(project_id, task_def_id)
-
-    return _build_brief(
-        projects,
-        base_url=base_url,
-        recently_completed_days=recently_completed_days,
-        task_fetcher=task_fetcher,
-        feedback_fetcher=feedback_fetcher,
-    )
-
-
 def build_brief_direct(
     base_url: str,
     auth_token: str,
@@ -195,9 +164,7 @@ def build_brief_direct(
         student_id = user.get("id")
 
     def task_fetcher(project_id: int) -> list[dict]:
-        return fetch_tasks_direct(
-            base_url, auth_token, username, project_id, session=session
-        )
+        return fetch_tasks_direct(base_url, auth_token, username, project_id, session=session)
 
     def feedback_fetcher(project_id: int, task_def_id: int) -> str | None:
         return fetch_last_feedback_direct(
