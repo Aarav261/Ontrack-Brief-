@@ -4,12 +4,11 @@ from datetime import date, datetime, timedelta
 
 import requests
 from apscheduler.triggers.date import DateTrigger
-from flask import Blueprint, g, jsonify, render_template, request
+from flask import Blueprint, g, jsonify, request
 
-from core.clerk_auth import require_clerk_auth
 from core.brief.builder import is_hidden
+from core.clerk_auth import require_clerk_auth
 from core.db import (
-    get_all_users,
     get_capture_meta,
     get_feedback_entries,
     get_pending_tasks,
@@ -18,7 +17,6 @@ from core.db import (
     get_user_by_username,
     link_clerk_id_by_email,
     prune_ended_projects,
-    reassign_email_by_username,
     reset_token_fail,
     set_brief_days,
     set_refresh_token,
@@ -33,30 +31,16 @@ from core.mailer import send_issue_report
 from core.ontrack import (
     RefreshTokenError,
     TokenManager,
+    append_missing_tasks,
+    enrich_tasks,
+    extract_latest_feedback,
     mint_auth_token,
-)
-from core.ontrack.fetcher import (
-    _append_missing_tasks,
-    _enrich_tasks,
-    _extract_latest_feedback,
 )
 from extensions import limiter, scheduler
 
 log = logging.getLogger(__name__)
 
 main_bp = Blueprint("main", __name__)
-
-
-@main_bp.route("/api/whoami")
-@require_clerk_auth
-def whoami():
-    """Phase 0 spike: proves a Clerk session JWT verifies on the backend."""
-    return jsonify(
-        {
-            "clerk_user_id": g.clerk_user_id,
-            "email": (g.clerk_claims or {}).get("email"),
-        }
-    )
 
 
 @main_bp.route("/api/version")
@@ -72,112 +56,37 @@ def index():
     return "OnTrack Brief API is running."
 
 
-def _process_user_setup(data: dict) -> tuple[int | None, tuple[dict, int] | None]:
-    base_url = data.get("base_url", "https://ontrack.deakin.edu.au").rstrip("/")
-    username = data.get("username", "").strip()
-    auth_token = data.get("auth_token", "").strip()
-    email = data.get("email", "").strip()
-    try:
-        brief_hour = max(0, min(23, int(data.get("brief_hour", 8))))
-        recently_days = max(1, int(data.get("recently_completed_days", 7)))
-        max_todo = max(1, int(data.get("max_todo_tasks", 10)))
-        # The extension sends brief_days as weeks*7; the brief window is 1 or 2
-        # weeks, so clamp to [7, 14] with 14 the long-standing default.
-        brief_days = 7 if int(data.get("brief_days", 14)) <= 7 else 14
-    except (ValueError, TypeError):
-        return None, ({"ok": False, "error": "invalid numbers"}, 400)
+def _clamp_brief_days(raw) -> int:
+    """The extension sends brief_days as weeks*7; the brief window is 1 or 2
+    weeks, so clamp to {7, 14} with 14 the long-standing default."""
+    return 7 if int(raw) <= 7 else 14
 
-    if not username or not auth_token or not email:
-        return None, ({"ok": False, "error": "missing fields"}, 400)
 
-    tm = TokenManager(base_url, username, auth_token)
-    try:
-        valid = tm.validate()
-    except requests.RequestException as exc:
-        log.warning("setup: OnTrack unreachable for %s: %s", username, exc)
-        return None, ({"ok": False, "error": "OnTrack unreachable, try again"}, 503)
-    if not valid:
-        return None, ({"ok": False, "error": "invalid token"}, 401)
+def _schedule_welcome_brief(user_id: int) -> None:
+    """Fire a one-off brief ~10s from now (first link / explicit enable)."""
+    scheduler.add_job(
+        run_brief,
+        DateTrigger(run_date=datetime.now() + timedelta(seconds=10)),
+        args=[user_id],
+        kwargs={"confirm_if_empty": True},
+        id=f"welcome_{user_id}",
+        replace_existing=True,
+    )
 
-    # Username is the account identity. If this OnTrack account is already
-    # registered under a different email, move the subscription rather than
-    # inserting a duplicate row (the table is unique on email, not username).
-    existing = get_user_by_username(username)
-    if existing and existing["email"] != email:
-        if not reassign_email_by_username(username, email):
-            return None, (
-                {
-                    "ok": False,
-                    "error": "That email is already registered to another OnTrack account",
-                },
-                409,
-            )
-        log.info(
-            "Re-registration of %s under a new email — moved subscription to %s",
-            username,
-            email,
-        )
 
-    user_id = upsert_user(
-        tm.base_url,
+def _persist_valid_token(user: dict, username: str, auth_token: str) -> None:
+    """Re-store the user with token_valid=1, preserving their saved preferences.
+    Shared by the two extension push paths that prove the session is alive."""
+    upsert_user(
+        user["base_url"],
         username,
-        tm.token,
-        email,
-        brief_hour,
-        recently_completed_days=recently_days,
-        max_todo_tasks=max_todo,
+        auth_token,
+        user["email"],
+        user["brief_hour"],
+        token_valid=1,
+        recently_completed_days=user.get("recently_completed_days", 7),
+        max_todo_tasks=user.get("max_todo_tasks", 10),
     )
-    set_brief_days(username, brief_days)
-    schedule_brief(user_id, brief_hour)
-    return user_id, None
-
-
-@main_bp.route("/register", methods=["POST"])
-@limiter.limit("10 per minute")
-def register():
-    data = request.get_json(silent=True) or {}
-    user_id, err_resp = _process_user_setup(data)
-    if err_resp:
-        return err_resp[0], err_resp[1]
-
-    scheduler.add_job(
-        run_brief,
-        DateTrigger(run_date=datetime.now() + timedelta(seconds=10)),
-        args=[user_id],
-        kwargs={"confirm_if_empty": True},
-        id=f"welcome_{user_id}",
-        replace_existing=True,
-    )
-    log.info(
-        "First brief for user_id=%s (via register) scheduled in 10 seconds", user_id
-    )
-
-    return {"ok": True}
-
-
-@main_bp.route("/setup", methods=["POST"])
-@limiter.limit("10 per minute")
-def setup():
-    """Update email-brief settings for an already-authenticated user."""
-    raw = request.get_json(silent=True)
-    if raw is None:
-        raw = {k: v for k, v in request.form.items()}
-    data = raw or {}
-
-    user_id, err_resp = _process_user_setup(data)
-    if err_resp:
-        return err_resp[0], err_resp[1]
-
-    scheduler.add_job(
-        run_brief,
-        DateTrigger(run_date=datetime.now() + timedelta(seconds=10)),
-        args=[user_id],
-        kwargs={"confirm_if_empty": True},
-        id=f"welcome_{user_id}",
-        replace_existing=True,
-    )
-    log.info("Settings updated for user_id=%s — immediate brief scheduled", user_id)
-    return {"ok": True}
 
 
 @main_bp.route("/refresh-token", methods=["POST"])
@@ -202,16 +111,7 @@ def refresh_token():
     was_invalid = not user["token_valid"]
 
     if token_changed or was_invalid:
-        upsert_user(
-            user["base_url"],
-            username,
-            auth_token,
-            user["email"],
-            user["brief_hour"],
-            token_valid=1,
-            recently_completed_days=user.get("recently_completed_days", 7),
-            max_todo_tasks=user.get("max_todo_tasks", 10),
-        )
+        _persist_valid_token(user, username, auth_token)
         if was_invalid:
             log.info("Token restored for %s — re-scheduling brief", username)
             schedule_brief(user["id"], user["brief_hour"])
@@ -246,16 +146,7 @@ def refresh_credential():
     # if briefs were paused on a dead token, restore and re-schedule them.
     reset_token_fail(user["email"])
     if not user["token_valid"]:
-        upsert_user(
-            user["base_url"],
-            username,
-            user["auth_token"],
-            user["email"],
-            user["brief_hour"],
-            token_valid=1,
-            recently_completed_days=user.get("recently_completed_days", 7),
-            max_todo_tasks=user.get("max_todo_tasks", 10),
-        )
+        _persist_valid_token(user, username, user["auth_token"])
         log.info("Refresh token received for %s — restoring paused brief", username)
         schedule_brief(user["id"], user["brief_hour"])
     else:
@@ -333,18 +224,15 @@ def ingest():
         project_id = payload.get("project_id")
         if project_id is None:
             return {"ok": False, "error": "missing project_id"}, 400
-        # Guard: _enrich_tasks and _append_missing_tasks both use
+        # Guard: enrich_tasks and append_missing_tasks both use
         # t["task_definition_id"] (hard key access). Drop any task dicts the
         # extension sent without that field before passing them in.
-        tasks = [
-            t for t in (payload.get("tasks") or [])
-            if t.get("task_definition_id") is not None
-        ]
+        tasks = [t for t in (payload.get("tasks") or []) if t.get("task_definition_id") is not None]
         task_defs = payload.get("task_definitions") or []
         # Same enrichment the server-pull path uses — resolve deadlines and
         # synthesise not-yet-started tasks — but run once here, against fresh data.
-        _enrich_tasks(tasks, task_defs)
-        _append_missing_tasks(tasks, task_defs)
+        enrich_tasks(tasks, task_defs)
+        append_missing_tasks(tasks, task_defs)
         # DB lookup wins over client-supplied unit_code so the extension can't
         # inject an arbitrary label; fall back to the payload when the project row
         # hasn't been upserted yet.
@@ -358,7 +246,7 @@ def ingest():
         if project_id is None or task_def_id is None:
             return {"ok": False, "error": "missing ids"}, 400
         comments = payload.get("comments")
-        text = _extract_latest_feedback(comments, payload.get("student_id"))
+        text = extract_latest_feedback(comments, payload.get("student_id"))
         if not text:
             return {"ok": True, "stored": 0}
         updated = set_task_feedback(user_id, project_id, task_def_id, text)
@@ -391,12 +279,9 @@ def link_ontrack():
         brief_hour = max(0, min(23, int(data.get("brief_hour", 8))))
         recently_days = max(1, int(data.get("recently_completed_days", 7)))
         max_todo = max(1, int(data.get("max_todo_tasks", 10)))
-        # The extension sends brief_days as weeks*7; clamp to [7, 14] (same as
-        # /setup). Only present on a deliberate Settings save — the auto re-link
-        # on every popup open omits it, so we must not reset the user's choice.
-        brief_days = None
-        if "brief_days" in data:
-            brief_days = 7 if int(data.get("brief_days", 14)) <= 7 else 14
+        # Only present on a deliberate Settings save — the auto re-link on every
+        # popup open omits it, so we must not reset the user's choice.
+        brief_days = _clamp_brief_days(data["brief_days"]) if "brief_days" in data else None
     except (ValueError, TypeError):
         return {"ok": False, "error": "invalid numbers"}, 400
 
@@ -475,14 +360,7 @@ def link_ontrack():
     if send_now or not was_paused:
         schedule_brief(user_id, brief_hour)
         if is_first_link or send_now:
-            scheduler.add_job(
-                run_brief,
-                DateTrigger(run_date=datetime.now() + timedelta(seconds=10)),
-                args=[user_id],
-                kwargs={"confirm_if_empty": True},
-                id=f"welcome_{user_id}",
-                replace_existing=True,
-            )
+            _schedule_welcome_brief(user_id)
             log.info(
                 "Immediate brief scheduled for clerk_user_id=%s (first_link=%s, send_now=%s)",
                 clerk_id,
@@ -509,7 +387,10 @@ def api_snapshot():
     populated by the extension's own /ingest pushes while the student is on OnTrack.
     """
     data = request.get_json(silent=True) or {}
-    days_count = min(14, max(1, int(data.get("days", 7))))
+    try:
+        days_count = min(14, max(1, int(data.get("days", 7))))
+    except (ValueError, TypeError):
+        days_count = 7
 
     # Identity comes only from the verified Clerk session — no body-supplied
     # username. Resolve by clerk_user_id, claiming a legacy row by verified email.
@@ -628,20 +509,6 @@ def report_issue():
         return {"ok": False, "error": "delivery_failed"}, 502
     log.info("Issue report submitted by %s", reporter_email)
     return {"ok": True}
-
-
-@main_bp.route("/unsubscribe/<path:email>")
-def unsubscribe(email: str):
-    # Pause, don't delete: drop the scheduled job and flip the flag so the user
-    # keeps their tokens/prefs and can resume from the popup with one click.
-    for user in get_all_users():
-        if user["email"] == email:
-            job_id = f"brief_{user['id']}"
-            if scheduler.get_job(job_id):
-                scheduler.remove_job(job_id)
-            break
-    set_subscribed(email, False)
-    return render_template("unsubscribed.html", email=email)
 
 
 @main_bp.route("/unsubscribe", methods=["POST"])

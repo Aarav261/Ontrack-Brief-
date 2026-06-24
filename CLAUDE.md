@@ -42,9 +42,7 @@ Load `extension/dist` via **chrome://extensions → Load unpacked** for local de
 
 ### Scripts
 ```bash
-python scripts/brief.py              # Manually trigger a brief for a user
 python scripts/test_send_now.py      # Send a brief immediately (dev testing)
-python scripts/scheduler.py          # Inspect/trigger APScheduler jobs
 python scripts/package_extension.py  # Zip extension/dist for distribution
 ```
 
