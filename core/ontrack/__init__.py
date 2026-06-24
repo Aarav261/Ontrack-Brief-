@@ -1,6 +1,7 @@
-"""OnTrack integration — rotating-token auth and the data-fetch client.
+"""OnTrack integration — rotating-token auth, data shaping, and the fetch client.
 
-Public API for the rest of the app; internals live in `auth.py` and `fetcher.py`.
+Public API for the rest of the app; internals live in `auth.py`, `fetcher.py`,
+and `normalize.py`.
 """
 
 from .auth import (
@@ -13,17 +14,12 @@ from .auth import (
     new_session,
 )
 from .fetcher import (
-    fetch_active_projects,
     fetch_active_projects_direct,
-    fetch_last_feedback,
     fetch_last_feedback_direct,
-    fetch_submission,
-    fetch_task_sheet,
-    fetch_tasks,
     fetch_tasks_direct,
-    load_api_auth,
     validate_token,
 )
+from .normalize import append_missing_tasks, enrich_tasks, extract_latest_feedback
 
 __all__ = [
     "RefreshTokenError",
@@ -33,14 +29,11 @@ __all__ = [
     "extract_token",
     "mint_auth_token",
     "new_session",
-    "fetch_active_projects",
     "fetch_active_projects_direct",
-    "fetch_last_feedback",
     "fetch_last_feedback_direct",
-    "fetch_submission",
-    "fetch_task_sheet",
-    "fetch_tasks",
     "fetch_tasks_direct",
-    "load_api_auth",
     "validate_token",
+    "append_missing_tasks",
+    "enrich_tasks",
+    "extract_latest_feedback",
 ]
