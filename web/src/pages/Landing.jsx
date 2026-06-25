@@ -38,7 +38,7 @@ const INSTALL_STEPS = [
     body: (
       <>
         <strong>Unzip</strong> it — you&rsquo;ll get a folder named{' '}
-        <code>ontrack-brief-extension</code>.
+        <code>ontracker</code>.
       </>
     ),
   },
