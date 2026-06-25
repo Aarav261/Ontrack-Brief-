@@ -11,14 +11,14 @@ export default function Header({
         <svg
           className="header-logo"
           viewBox="0 0 128 128"
-          width="34"
-          height="34"
+          width="42"
+          height="42"
           aria-hidden="true"
         >
           <mask id="ontracker-logo-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="128" height="128">
-            <circle cx="64" cy="64" r="47" fill="#fff" />
-            <path d="M64 24 Q64 64 84 64 Q64 64 64 104 Q64 64 44 64 Q64 64 64 24 Z" fill="#000" />
-            <rect x="14" y="62.75" width="100" height="2.5" fill="#000" />
+            <circle cx="64" cy="64" r="58" fill="#fff" />
+            <path d="M64 15 Q64 64 89 64 Q64 64 64 113 Q64 64 39 64 Q64 64 64 15 Z" fill="#000" />
+            <rect x="2" y="62.5" width="124" height="3" fill="#000" />
           </mask>
           <rect width="128" height="128" fill="#4361ee" mask="url(#ontracker-logo-cut)" />
         </svg>
