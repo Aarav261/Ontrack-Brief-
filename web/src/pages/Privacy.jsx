@@ -57,7 +57,7 @@ export default function Privacy() {
           your OnTrack username &mdash; directly from your own OnTrack session in the
           browser. You never copy or paste a token. These let our server generate
           your brief on your behalf without you needing to stay logged in. They are{' '}
-          <strong>encrypted at rest</strong> (see &sect;5).
+          <strong>encrypted at rest</strong>.
         </p>
 
         <h3 className="legal-h3">OnTrack course data</h3>

@@ -6,9 +6,11 @@ import { config as loadDotenv } from 'dotenv';
 
 // Build mode picks the env file (gitignored) AND the output dir, so a localhost
 // build and the prod build can coexist and be loaded in Chrome side by side:
-//   `vite build`                  -> .env.dev,  dist/        (default dev)
-//   `vite build --mode production`-> .env.prod, dist/        (Web Store / live)
-//   `vite build --mode devlocal` -> .env.dev,  dist-local/  (separate instance)
+//   `npm run build`       (--mode development) -> .env.dev,  dist/       (dev, localhost)
+//   `npm run build:prod`  (--mode production)  -> .env.prod, dist/       (Web Store / live)
+//   `npm run build:local` (--mode devlocal)    -> .env.dev,  dist-local/ (separate instance)
+// `build` must pin --mode development: a bare `vite build` defaults the mode to
+// 'production', which would load .env.prod and point dev at the live backend.
 // ('local' is reserved by Vite — it clashes with the .env.local postfix.)
 // Values are injected at build time and never logged.
 export default defineConfig(({ mode }) => {
@@ -53,27 +55,38 @@ export default defineConfig(({ mode }) => {
             `globalThis.APP_URL = ${JSON.stringify(appUrl)};\n`
           );
 
-          if (isLocal) {
-            // Chrome refuses to load two unpacked extensions that share an ID.
-            // The fixed `key` pins the prod ID, so strip it here (Chrome assigns
-            // a path-derived ID instead) and relabel so the two are obvious in
-            // chrome://extensions.
-            const manifestPath = resolve(__dirname, outDir, 'manifest.json');
-            const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-            delete manifest.key;
-            manifest.name = `${manifest.name} (local)`;
-            writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
-          }
+          const manifestPath = resolve(__dirname, outDir, 'manifest.json');
+          const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 
           if (isProd) {
             // Narrow host_permissions to the live hosts only — drop the localhost
             // backends, the dev Clerk *.accounts.dev domain, and dead legacy hosts
             // the committed manifest keeps for dev convenience.
-            const manifestPath = resolve(__dirname, outDir, 'manifest.json');
-            const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
             manifest.host_permissions = PROD_HOST_PERMISSIONS;
-            writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+          } else {
+            // Dev/devlocal point APP_URL at a localhost backend, but the committed
+            // manifest omits the localhost hosts so the prod build stays clean.
+            // Merge them back in from manifest.dev.json (overlay, not a full copy,
+            // so the shared hosts can't drift out of sync).
+            const devHosts = JSON.parse(
+              readFileSync(resolve(__dirname, 'manifest.dev.json'), 'utf8')
+            ).host_permissions;
+            manifest.host_permissions = [
+              ...manifest.host_permissions,
+              ...devHosts.filter((h) => !manifest.host_permissions.includes(h)),
+            ];
           }
+
+          if (isLocal) {
+            // Chrome refuses to load two unpacked extensions that share an ID.
+            // The fixed `key` pins the prod ID, so strip it here (Chrome assigns
+            // a path-derived ID instead) and relabel so the two are obvious in
+            // chrome://extensions.
+            delete manifest.key;
+            manifest.name = `${manifest.name} (local)`;
+          }
+
+          writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
         },
       },
     ],
