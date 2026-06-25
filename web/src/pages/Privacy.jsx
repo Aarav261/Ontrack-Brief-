@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 
 // Last substantive update to this policy. Bump when the data practices change.
 const LAST_UPDATED = '26 June 2026'
-const CONTACT_EMAIL = 'privacy@on-tracker.com'
+const CONTACT_EMAIL = 'support@on-tracker.com'
 
 export default function Privacy() {
   return (
