@@ -26,6 +26,19 @@ export default defineConfig(({ mode }) => {
   // (importScripts). Strip any trailing slash so `${APP_URL}/path` stays clean.
   const appUrl = (pick('APP_URL') || 'http://localhost:8000').replace(/\/$/, '');
 
+  // The committed manifest carries every host the extension might touch across dev
+  // and prod (localhost backends, the dev Clerk *.accounts.dev domain, etc.). The
+  // Web Store build must request only the live hosts it actually uses, both to pass
+  // review and to keep the install-time permission prompt honest. In prod the
+  // backend is APP_URL, the web app + Clerk FAPI live under on-tracker.com, and
+  // OnTrack is the capture target — nothing else.
+  const PROD_HOST_PERMISSIONS = [
+    'https://ontrack.deakin.edu.au/*',
+    'https://on-tracker.com/*',
+    'https://*.on-tracker.com/*',
+    'https://ontracker-production.up.railway.app/*',
+  ];
+
   return {
     plugins: [
       react(),
@@ -49,6 +62,16 @@ export default defineConfig(({ mode }) => {
             const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
             delete manifest.key;
             manifest.name = `${manifest.name} (local)`;
+            writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+          }
+
+          if (isProd) {
+            // Narrow host_permissions to the live hosts only — drop the localhost
+            // backends, the dev Clerk *.accounts.dev domain, and dead legacy hosts
+            // the committed manifest keeps for dev convenience.
+            const manifestPath = resolve(__dirname, outDir, 'manifest.json');
+            const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+            manifest.host_permissions = PROD_HOST_PERMISSIONS;
             writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
           }
         },

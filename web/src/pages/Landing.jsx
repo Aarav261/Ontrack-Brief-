@@ -181,7 +181,12 @@ export default function Landing() {
         <span className="brand brand-sm">
           OnTrack<span className="brand-paren">(er)</span>
         </span>
-        <span>Made for Deakin students.</span>
+        <span className="footer-links">
+          <Link className="navlink" to="/privacy">
+            Privacy
+          </Link>
+          <span>Made for Deakin students.</span>
+        </span>
       </footer>
     </div>
   )
