@@ -8,6 +8,7 @@ import secrets
 
 from flask import Flask
 from flask_cors import CORS
+import sentry_sdk
 
 from core.jobs import startup
 from extensions import limiter
@@ -16,6 +17,22 @@ from routes.main import main_bp
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
+
+# Error/performance monitoring. Only initialises when SENTRY_DSN is set, so local
+# dev stays quiet and the DSN never lives in source. The Flask integration is
+# picked up automatically once flask is importable.
+_sentry_dsn = os.environ.get("SENTRY_DSN")
+if _sentry_dsn:
+    sentry_sdk.init(
+        dsn=_sentry_dsn,
+        environment=os.environ.get("SENTRY_ENVIRONMENT", "production"),
+        # Off: this app handles student emails/usernames — don't ship request
+        # headers/IPs or PII to Sentry.
+        send_default_pii=False,
+        # Forward logging.* records to Sentry.
+        enable_logs=True,
+    )
+    log.info("Sentry initialised (env=%s)", os.environ.get("SENTRY_ENVIRONMENT", "production"))
 
 def create_app() -> Flask:
     app = Flask(__name__)
