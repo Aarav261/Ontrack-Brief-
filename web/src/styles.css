@@ -310,6 +310,113 @@ body {
   color: var(--faint);
 }
 
+.footer-links {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.footer-links .navlink {
+  font-size: 13px;
+  color: var(--faint);
+}
+
+.footer-links .navlink:hover {
+  color: var(--accent);
+}
+
+/* ── Legal / privacy page ────────────────────────────────── */
+.legal {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 40px 0 72px;
+}
+
+.legal-title {
+  font-size: 40px;
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: -1px;
+  margin: 0 0 12px;
+}
+
+.legal-meta {
+  font-size: 14px;
+  color: var(--faint);
+  margin: 0 0 32px;
+}
+
+.legal-lead {
+  font-size: 18px;
+  line-height: 1.65;
+  color: var(--muted);
+  margin: 0 0 40px;
+}
+
+.legal-h2 {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  margin: 44px 0 14px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+
+.legal-h3 {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 24px 0 8px;
+}
+
+.legal p {
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--ink);
+  margin: 0 0 16px;
+}
+
+.legal-note {
+  font-style: italic;
+  color: var(--muted);
+}
+
+.legal-list {
+  margin: 0 0 16px;
+  padding-left: 22px;
+}
+
+.legal-list li {
+  font-size: 16px;
+  line-height: 1.7;
+  margin-bottom: 8px;
+}
+
+.legal a {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.legal a:hover {
+  text-decoration: underline;
+}
+
+.legal code {
+  font-family: 'SFMono-Regular', ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  background: #f1f0ec;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1.5px 6px;
+  white-space: nowrap;
+}
+
+@media (max-width: 800px) {
+  .legal-title {
+    font-size: 30px;
+  }
+}
+
 /* ── Sign-in / sign-up pages ─────────────────────────────── */
 .centered {
   min-height: 100vh;
