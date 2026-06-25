@@ -3,6 +3,7 @@ import Landing from './pages/Landing.jsx'
 import SignInPage from './pages/SignInPage.jsx'
 import SignUpPage from './pages/SignUpPage.jsx'
 import Unsubscribe from './pages/Unsubscribe.jsx'
+import Privacy from './pages/Privacy.jsx'
 
 export default function App() {
   return (
@@ -11,6 +12,7 @@ export default function App() {
       <Route path="/sign-in/*" element={<SignInPage />} />
       <Route path="/sign-up/*" element={<SignUpPage />} />
       <Route path="/unsubscribe" element={<Unsubscribe />} />
+      <Route path="/privacy" element={<Privacy />} />
     </Routes>
   )
 }
