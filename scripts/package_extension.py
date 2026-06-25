@@ -5,8 +5,8 @@ Run AFTER building the production bundle:
     cd extension && npm run build:prod
     python scripts/package_extension.py
 
-Produces `ontrack-brief-extension.zip` at the repo root. The archive contains a
-single top-level `ontrack-brief-extension/` folder — users unzip it and point
+Produces `ontracker.zip` at the repo root. The archive contains a
+single top-level `ontracker/` folder — users unzip it and point
 Chrome's "Load unpacked" at that folder.
 """
 
@@ -19,8 +19,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 DIST = ROOT / "extension" / "dist"
-OUT = ROOT / "ontrack-brief-extension.zip"
-TOP = "ontrack-brief-extension"  # folder name inside the zip
+OUT = ROOT / "ontracker.zip"
+TOP = "ontracker"  # folder name inside the zip
 
 
 def main() -> None:
