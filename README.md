@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo.png" alt="OnTrack(er)" width="120" />
+<img src="\extension\public\icons\icon128.png" alt="OnTrack(er)" width="120" />
 
 # OnTrack(er)
 
