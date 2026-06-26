@@ -43,6 +43,9 @@ body {
 }
 
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
   font-size: 34px;
   font-weight: 800;
   letter-spacing: -1px;
@@ -50,9 +53,15 @@ body {
   line-height: 1;
 }
 
+.brand-logo {
+  flex: none;
+  display: block;
+}
+
 .brand-sm {
   font-size: 20px;
   letter-spacing: -0.5px;
+  gap: 8px;
 }
 
 .brand-paren {

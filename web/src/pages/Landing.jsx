@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { SignedIn, SignedOut, UserButton } from '@clerk/clerk-react'
+import Logo from '../components/Logo.jsx'
 
 const RELEASES_URL = 'https://github.com/Aarav261/Ontracker/releases/latest'
 
@@ -82,6 +83,7 @@ export default function Landing() {
     <div className="page">
       <header className="topbar">
         <span className="brand">
+          <Logo size={32} className="brand-logo" />
           OnTrack<span className="brand-paren">(er)</span>
         </span>
         <nav className="topbar-right">
@@ -179,6 +181,7 @@ export default function Landing() {
 
       <footer className="site-footer">
         <span className="brand brand-sm">
+          <Logo size={22} className="brand-logo" />
           OnTrack<span className="brand-paren">(er)</span>
         </span>
         <span className="footer-links">
