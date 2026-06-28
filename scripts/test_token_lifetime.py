@@ -8,7 +8,8 @@ to a file so it survives a closed terminal.
 Usage:
     python scripts/test_token_lifetime.py --token <your_token> --username <you>
     python scripts/test_token_lifetime.py --token <your_token> --username <you> --interval 300
-    python scripts/test_token_lifetime.py --token <your_token> --username <you> --interval 300 --log token_lifetime.log
+    python scripts/test_token_lifetime.py --token <your_token> --username <you> \
+        --interval 300 --log token_lifetime.log
 """
 
 from __future__ import annotations

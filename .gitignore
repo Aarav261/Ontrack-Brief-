@@ -14,9 +14,8 @@ venv/
 .ruff_cache/
 .pytest_cache/
 *.egg-info/
-# Kept out of the public repo (design doc + local-dev compose)
+# Kept out of the public repo (internal design doc)
 ARCHITECTURE.md
-docker-compose.yml
 
 # Node / extension
 node_modules/

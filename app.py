@@ -6,9 +6,9 @@ import logging
 import os
 import secrets
 
+import sentry_sdk
 from flask import Flask
 from flask_cors import CORS
-import sentry_sdk
 
 from core.jobs import startup
 from extensions import limiter
