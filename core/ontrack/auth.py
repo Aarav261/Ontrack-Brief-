@@ -206,7 +206,7 @@ class TokenManager:
     @classmethod
     def for_user(
         cls, user: dict, *, session: requests.Session | None = None
-    ) -> "TokenManager":
+    ) -> TokenManager:
         """Build a TokenManager from a DB user row."""
         return cls(
             user["base_url"], user["username"], user["auth_token"], session=session

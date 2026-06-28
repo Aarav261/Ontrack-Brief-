@@ -20,7 +20,7 @@ from core.brief import build_brief_direct, pending_due_entries, render_html
 from core.constants import CONFIG_PATH
 from core.db import get_all_users, upsert_user
 from core.mailer import send_brief_to
-from core.ontrack import fetch_active_projects_direct, TokenExpiredError
+from core.ontrack import TokenExpiredError, fetch_active_projects_direct
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -75,11 +75,10 @@ def main() -> None:
             sys.exit(0)
         log.info("Found %d active project(s)", len(projects))
 
+        # build_brief_direct doesn't surface a rotated token, so the freshest
+        # token we have is the one captured from the projects fetch above
+        # (already persisted on rotation).
         brief = build_brief_direct(base_url, fresh_token, username, projects)
-        final_token = get_last_seen_token() or fresh_token
-        if final_token != fresh_token:
-            log.info("Token rotated after build — saving ...%s", final_token[-6:])
-            upsert_user(base_url, username, final_token, u["email"], u["brief_hour"])
         today = date.today()
         pending_due = pending_due_entries(brief, today, 14)
         due_this_week = len(pending_due_entries(brief, today, 6))

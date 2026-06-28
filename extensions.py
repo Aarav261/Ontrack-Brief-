@@ -1,8 +1,10 @@
 import os
+
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from apscheduler.schedulers.background import BackgroundScheduler
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+
 from core.db import get_sqlalchemy_url
 
 _REDIS_URL = os.environ.get("REDIS_URL", "")

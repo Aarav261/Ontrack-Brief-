@@ -25,14 +25,17 @@ def _quote_footer() -> str:
     text = _escape(text)
     author = _escape(author)
     return f"""
-<td style="padding:22px 32px;border-top:1px solid #ececec;background:#fafafa;border-radius:0 0 14px 14px">
+<td style="padding:22px 32px;border-top:1px solid #ececec;background:#fafafa;
+           border-radius:0 0 14px 14px">
   <table width="100%" cellpadding="0" cellspacing="0">
     <tr>
       <td style="padding-left:14px;border-left:3px solid {_ACCENT}">
-        <div style="font-family:{_FONT};font-style:italic;font-size:15px;line-height:1.55;color:#3a3a3a">
+        <div style="font-family:{_FONT};font-style:italic;font-size:15px;
+                    line-height:1.55;color:#3a3a3a">
           {text}
         </div>
-        <div style="font-family:{_FONT};font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:#9a9a9a;margin-top:8px;font-weight:600">
+        <div style="font-family:{_FONT};font-size:11px;letter-spacing:1.2px;
+                    text-transform:uppercase;color:#9a9a9a;margin-top:8px;font-weight:600">
           {author}
         </div>
       </td>
@@ -83,10 +86,12 @@ def render_email(
                 style="background:#ffffff;border:1px solid #e3e3e3;border-radius:14px">
           <table width="100%" cellpadding="0" cellspacing="0">
             <tr><td style="padding:24px 32px 18px;border-bottom:1px solid #ececec">
-              <div style="font-size:11px;letter-spacing:2.4px;text-transform:uppercase;color:{_ACCENT};font-weight:700;font-family:{_FONT}">
+              <div style="font-size:11px;letter-spacing:2.4px;text-transform:uppercase;
+                          color:{_ACCENT};font-weight:700;font-family:{_FONT}">
                 {_escape(eyebrow)}
               </div>
-              <div style="font-size:24px;font-weight:800;color:{_INK};font-family:{_FONT};margin-top:6px;letter-spacing:-0.4px;line-height:1.25">
+              <div style="font-size:24px;font-weight:800;color:{_INK};font-family:{_FONT};
+                          margin-top:6px;letter-spacing:-0.4px;line-height:1.25">
                 {heading}
               </div>
             </td></tr>
@@ -97,7 +102,8 @@ def render_email(
           </table>
         </td></tr>
         <tr><td align="center" style="padding:18px 0 0">
-          <div style="font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#b0b0b0;font-family:{_FONT};font-weight:600">
+          <div style="font-size:11px;letter-spacing:1.5px;text-transform:uppercase;
+                      color:#b0b0b0;font-family:{_FONT};font-weight:600">
             OnTrack Brief
           </div>
         </td></tr>
