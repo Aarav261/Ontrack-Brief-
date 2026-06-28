@@ -119,9 +119,13 @@ scripts/          packaging + maintenance helpers
 
 ---
 
+## Contributing
+
+Contributions are welcome! See [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to set
+up locally and submit a pull request, and our [Code of Conduct](CODE_OF_CONDUCT.md).
+To report a security issue, see [`SECURITY.md`](SECURITY.md).
+
 ## License
 
-© 2026 Aarav. **All rights reserved.** This source is published for reference and
-portfolio purposes only — it is **not** open source. You may view it, but you may
-not use, copy, deploy, modify, or distribute it without written permission. See
-[`LICENSE`](LICENSE) for the full terms.
+Released under the [MIT License](LICENSE) © 2026 Aarav. You're free to use, modify,
+and distribute it with attribution.

@@ -134,7 +134,9 @@ def _build_brief(
             elif status in SUBMITTED:
                 submitted.append((task, unit_code, None))
 
-    sort_key = lambda e: _score(e[0], today)
+    def sort_key(e):
+        return _score(e[0], today)
+
     urgent.sort(key=sort_key)
     todo.sort(key=sort_key)
     waiting.sort(key=sort_key)

@@ -63,7 +63,11 @@ def _task_row(entry: dict, today: date) -> str:
     abbrev = _escape(task.get("abbreviation", ""))
 
     if task.get("_url"):
-        name_cell = f'<a href="{task["_url"]}" style="color:#111111;text-decoration:none;font-weight:500" target="_blank">{name}</a>'
+        name_cell = (
+            f'<a href="{task["_url"]}" '
+            'style="color:#111111;text-decoration:none;font-weight:500" '
+            f'target="_blank">{name}</a>'
+        )
     else:
         name_cell = f'<span style="color:#111111;font-weight:500">{name}</span>'
 
@@ -74,7 +78,8 @@ def _task_row(entry: dict, today: date) -> str:
         f'color:#666666;white-space:nowrap;border-bottom:1px solid #e8e8e8">{unit_code}</td>'
         f'<td style="padding:10px 12px 10px 0;font-size:11px;font-family:monospace;'
         f'color:#9a9a9a;white-space:nowrap;border-bottom:1px solid #e8e8e8">{abbrev}</td>'
-        f'<td style="padding:10px 18px 10px 0;font-size:13px;border-bottom:1px solid #e8e8e8;width:99%">'
+        f'<td style="padding:10px 18px 10px 0;font-size:13px;'
+        f'border-bottom:1px solid #e8e8e8;width:99%">'
         f"{name_cell}</td>"
         f'<td style="padding:10px 0;border-bottom:1px solid #e8e8e8;white-space:nowrap;'
         f'font-size:12px;color:{due_color};font-weight:700">'
@@ -114,14 +119,19 @@ def render_html(
         )
     else:
         rows = "".join(_task_row(entry, today) for entry in pending_entries)
+        # Shared <th> style; only the padding differs per column.
+        _th_base = (
+            "font-size:10px;text-transform:uppercase;color:#888888;"
+            "letter-spacing:.9px;text-align:left;border-bottom:2px solid #e8e8e8"
+        )
         body = f"""
 <table width="100%" cellpadding="0" cellspacing="0">
   <thead>
     <tr>
-      <th style="padding:8px 12px 8px 0;font-size:10px;text-transform:uppercase;color:#888888;letter-spacing:.9px;text-align:left;border-bottom:2px solid #e8e8e8">Unit</th>
-      <th style="padding:8px 12px 8px 0;font-size:10px;text-transform:uppercase;color:#888888;letter-spacing:.9px;text-align:left;border-bottom:2px solid #e8e8e8">Task</th>
-      <th style="padding:8px 18px 8px 0;font-size:10px;text-transform:uppercase;color:#888888;letter-spacing:.9px;text-align:left;border-bottom:2px solid #e8e8e8">Name</th>
-      <th style="padding:8px 0;font-size:10px;text-transform:uppercase;color:#888888;letter-spacing:.9px;text-align:left;border-bottom:2px solid #e8e8e8">Due</th>
+      <th style="padding:8px 12px 8px 0;{_th_base}">Unit</th>
+      <th style="padding:8px 12px 8px 0;{_th_base}">Task</th>
+      <th style="padding:8px 18px 8px 0;{_th_base}">Name</th>
+      <th style="padding:8px 0;{_th_base}">Due</th>
     </tr>
   </thead>
   <tbody>{rows}</tbody>
