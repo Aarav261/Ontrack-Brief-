@@ -7,9 +7,25 @@ export default function Header({
 }) {
   return (
     <div className="header">
-      <div>
-        <div className="header-title">OnTrack(er)</div>
-        <div className="header-subtitle">Your OnTrack tasks, at a glance</div>
+      <div className="header-brand">
+        <svg
+          className="header-logo"
+          viewBox="0 0 128 128"
+          width="42"
+          height="42"
+          aria-hidden="true"
+        >
+          <mask id="ontracker-logo-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="128" height="128">
+            <circle cx="64" cy="64" r="58" fill="#fff" />
+            <path d="M64 15 Q64 64 89 64 Q64 64 64 113 Q64 64 39 64 Q64 64 64 15 Z" fill="#000" />
+            <rect x="2" y="62.5" width="124" height="3" fill="#000" />
+          </mask>
+          <rect width="128" height="128" fill="#4361ee" mask="url(#ontracker-logo-cut)" />
+        </svg>
+        <div>
+          <div className="header-title">OnTrack(er)</div>
+          <div className="header-subtitle">Your OnTrack tasks, at a glance</div>
+        </div>
       </div>
       <div className="header-right">
         <button

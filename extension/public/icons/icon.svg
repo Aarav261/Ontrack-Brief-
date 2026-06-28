@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- Ontracker mark: sparkle-in-a-circle, site accent blue (#4361ee).
+       The star and the equatorial split are cut out (transparent) via a mask,
+       so the icon sits cleanly on any toolbar background. -->
+  <defs>
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="128" height="128">
+      <circle cx="64" cy="64" r="58" fill="#fff"/>
+      <path d="M64 15 Q64 64 89 64 Q64 64 64 113 Q64 64 39 64 Q64 64 64 15 Z" fill="#000"/>
+      <rect x="2" y="62.5" width="124" height="3" fill="#000"/>
+    </mask>
+  </defs>
+  <rect width="128" height="128" fill="#4361ee" mask="url(#cut)"/>
+</svg>

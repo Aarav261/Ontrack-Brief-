@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import Logo from '../components/Logo.jsx'
 
 // Last substantive update to this policy. Bump when the data practices change.
 const LAST_UPDATED = '26 June 2026'
@@ -9,6 +10,7 @@ export default function Privacy() {
     <div className="page">
       <header className="topbar">
         <Link className="brand brand-sm" to="/" style={{ textDecoration: 'none' }}>
+          <Logo size={22} className="brand-logo" />
           OnTrack<span className="brand-paren">(er)</span>
         </Link>
         <nav className="topbar-right">
@@ -210,6 +212,7 @@ export default function Privacy() {
 
       <footer className="site-footer">
         <Link className="brand brand-sm" to="/" style={{ textDecoration: 'none' }}>
+          <Logo size={22} className="brand-logo" />
           OnTrack<span className="brand-paren">(er)</span>
         </Link>
         <span>Made for Deakin students.</span>

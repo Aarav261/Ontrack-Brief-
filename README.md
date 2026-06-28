@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo.png" alt="OnTrack(er)" width="120" />
+<img src="\extension\public\icons\icon128.png" alt="OnTrack(er)" width="120" />
 
 # OnTrack(er)
 
@@ -40,10 +40,10 @@ The companion Chrome extension shows the same tasks live in a popup and keeps yo
 ### Option A — Download & load unpacked (no build needed)
 
 1. **Download** the latest extension `.zip` from the **[Releases page »](https://github.com/Aarav261/Ontracker/releases/latest)**
-2. **Unzip** it — you'll get a folder named `ontrack-brief-extension`.
+2. **Unzip** it — you'll get a folder named `ontracker`.
 3. Open **`chrome://extensions`** in Chrome.
 4. Toggle **Developer mode** on (top-right).
-5. Click **Load unpacked** and select the unzipped **`ontrack-brief-extension`** folder.
+5. Click **Load unpacked** and select the unzipped **`ontracker`** folder.
 6. The OnTrack(er) icon appears in your toolbar. Click it and **sign in at [on-tracker.com](https://on-tracker.com)**.
 7. Open OnTrack once so the extension can link your account — your tasks then load in the popup, and your daily brief is scheduled.
 

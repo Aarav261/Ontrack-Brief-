@@ -32,6 +32,15 @@ body {
   background: #fff;
   border-bottom: 1px solid #e0e0e0;
 }
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.header-logo {
+  flex: none;
+  display: block;
+}
 .header-title {
   font-size: 30px;
   font-weight: 800;
