@@ -649,6 +649,39 @@ body {
   border-color: #4361ee;
   background: #fff;
 }
+/* Day-of-week toggles: a wrapped row of small checkbox pills. Override the generic
+   full-width .field-group input rule above so the boxes size naturally. */
+.day-toggle {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+.day-toggle .day-checkbox {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #555;
+  text-transform: none;
+  background: #fafafa;
+  border: 1.5px solid #e5e5e5;
+  border-radius: 8px;
+  padding: 7px;
+  cursor: pointer;
+  letter-spacing: 0.3px;
+  margin-bottom: 0;
+}
+.day-toggle .day-checkbox input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  flex-shrink: 0;
+  accent-color: #4361ee;
+}
 .issue-textarea {
   width: 100%;
   padding: 10px 12px;

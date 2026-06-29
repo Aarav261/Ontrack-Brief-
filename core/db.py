@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
+import random
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -26,9 +29,7 @@ def _decrypt_row(row: dict | None) -> dict | None:
 
 
 _DATABASE_URL = os.environ.get("DATABASE_URL", "")
-_DB_PATH = Path(
-    os.environ.get("DB_PATH", str(Path(__file__).parent.parent / "ontracker.db"))
-)
+_DB_PATH = Path(os.environ.get("DB_PATH", str(Path(__file__).parent.parent / "ontracker.db")))
 _USE_PG = _DATABASE_URL.startswith(("postgresql://", "postgres://"))
 
 if _USE_PG:
@@ -64,6 +65,50 @@ def _connection():
             conn.close()
 
 
+# Postgres aborts one transaction in a deadlock (SQLSTATE 40P01) and serialization
+# failures (40001); SQLite raises "database is locked". These are transient: the
+# extension hammers the same user row concurrently (auto re-link on every popup open
+# alongside /ingest, /refresh-token, /refresh-credential), so two writers can grab
+# row/index locks in opposite order. The loser should just retry, not 500.
+_RETRY_SQLSTATES = {"40P01", "40001"}
+_RETRY_MESSAGES = ("deadlock detected", "database is locked")
+
+
+def _is_transient_conflict(exc: Exception) -> bool:
+    if getattr(exc, "pgcode", None) in _RETRY_SQLSTATES:
+        return True
+    msg = str(exc).lower()
+    return any(m in msg for m in _RETRY_MESSAGES)
+
+
+def _retry_on_deadlock(fn):
+    """Retry a write that lost a deadlock / lock race, with a little backoff. Each of
+    our write helpers runs in its own short transaction (open → one statement →
+    commit → close), so re-running the whole function is a safe, fresh attempt."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        attempts = 5
+        for i in range(attempts):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as exc:
+                if not _is_transient_conflict(exc) or i == attempts - 1:
+                    raise
+                backoff = 0.05 * (2**i) + random.uniform(0, 0.05)
+                log.warning(
+                    "Transient DB conflict in %s (attempt %d/%d) — retrying in %.0fms: %s",
+                    fn.__name__,
+                    i + 1,
+                    attempts,
+                    backoff * 1000,
+                    exc,
+                )
+                time.sleep(backoff)
+
+    return wrapper
+
+
 def init_db() -> None:
     with _connection() as conn:
         cur = conn.cursor()
@@ -78,6 +123,8 @@ def init_db() -> None:
                     email                   TEXT NOT NULL UNIQUE,
                     clerk_user_id           TEXT,
                     brief_hour              INTEGER NOT NULL DEFAULT 8,
+                    brief_minute            INTEGER NOT NULL DEFAULT 0,
+                    brief_dow               TEXT NOT NULL DEFAULT 'mon-fri',
                     token_valid             INTEGER NOT NULL DEFAULT 1,
                     token_fail_count        INTEGER NOT NULL DEFAULT 0,
                     subscribed              INTEGER NOT NULL DEFAULT 1,
@@ -94,6 +141,8 @@ def init_db() -> None:
                 ("recently_completed_days", "INTEGER NOT NULL DEFAULT 7"),
                 ("max_todo_tasks", "INTEGER NOT NULL DEFAULT 10"),
                 ("brief_days", "INTEGER NOT NULL DEFAULT 14"),
+                ("brief_minute", "INTEGER NOT NULL DEFAULT 0"),
+                ("brief_dow", "TEXT NOT NULL DEFAULT 'mon-fri'"),
                 ("last_snapshot", "TEXT"),
                 ("clerk_user_id", "TEXT"),
                 ("token_fail_count", "INTEGER NOT NULL DEFAULT 0"),
@@ -113,8 +162,7 @@ def init_db() -> None:
             # Clerk identity is unique but nullable (NULLs are distinct) — index, not
             # an ADD COLUMN UNIQUE, so it works as a migration on both engines.
             cur.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_clerk_user_id "
-                "ON users(clerk_user_id)"
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_clerk_user_id ON users(clerk_user_id)"
             )
         else:
             cur.execute("""
@@ -127,6 +175,8 @@ def init_db() -> None:
                     email                   TEXT NOT NULL UNIQUE,
                     clerk_user_id           TEXT,
                     brief_hour              INTEGER NOT NULL DEFAULT 8,
+                    brief_minute            INTEGER NOT NULL DEFAULT 0,
+                    brief_dow               TEXT NOT NULL DEFAULT 'mon-fri',
                     token_valid             INTEGER NOT NULL DEFAULT 1,
                     token_fail_count        INTEGER NOT NULL DEFAULT 0,
                     subscribed              INTEGER NOT NULL DEFAULT 1,
@@ -144,6 +194,8 @@ def init_db() -> None:
                 ("recently_completed_days", "INTEGER NOT NULL DEFAULT 7"),
                 ("max_todo_tasks", "INTEGER NOT NULL DEFAULT 10"),
                 ("brief_days", "INTEGER NOT NULL DEFAULT 14"),
+                ("brief_minute", "INTEGER NOT NULL DEFAULT 0"),
+                ("brief_dow", "TEXT NOT NULL DEFAULT 'mon-fri'"),
                 ("last_snapshot", "TEXT"),
                 ("clerk_user_id", "TEXT"),
                 ("token_fail_count", "INTEGER NOT NULL DEFAULT 0"),
@@ -155,8 +207,7 @@ def init_db() -> None:
             # Clerk identity is unique but nullable (NULLs are distinct) — index, not
             # an ADD COLUMN UNIQUE (SQLite forbids that as a migration).
             cur.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_clerk_user_id "
-                "ON users(clerk_user_id)"
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_clerk_user_id ON users(clerk_user_id)"
             )
 
         # Deterministic-brief tables (see docs/DETERMINISTIC_BRIEF_PLAN.md). The
@@ -193,11 +244,11 @@ def init_db() -> None:
             )
         """)
         cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_tasks_user_deadline "
-            "ON tasks(user_id, deadline)"
+            "CREATE INDEX IF NOT EXISTS idx_tasks_user_deadline ON tasks(user_id, deadline)"
         )
 
 
+@_retry_on_deadlock
 def upsert_user(
     base_url: str,
     username: str,
@@ -270,11 +321,10 @@ def upsert_user(
                     clerk_user_id,
                 ),
             )
-            return cur.execute(
-                f"SELECT id FROM users WHERE email = {_P}", (email,)
-            ).fetchone()[0]
+            return cur.execute(f"SELECT id FROM users WHERE email = {_P}", (email,)).fetchone()[0]
 
 
+@_retry_on_deadlock
 def update_user_snapshot(username: str, snapshot_json: str) -> None:
     with _connection() as conn:
         cur = conn.cursor()
@@ -284,12 +334,14 @@ def update_user_snapshot(username: str, snapshot_json: str) -> None:
         )
 
 
+@_retry_on_deadlock
 def mark_token_invalid(email: str) -> None:
     with _connection() as conn:
         cur = conn.cursor()
         cur.execute(f"UPDATE users SET token_valid = 0 WHERE email = {_P}", (email,))
 
 
+@_retry_on_deadlock
 def bump_token_fail(email: str) -> int:
     """Increment the consecutive token-validation failure count; return the new value.
 
@@ -302,22 +354,20 @@ def bump_token_fail(email: str) -> int:
             f"UPDATE users SET token_fail_count = token_fail_count + 1 WHERE email = {_P}",
             (email,),
         )
-        cur.execute(
-            f"SELECT token_fail_count FROM users WHERE email = {_P}", (email,)
-        )
+        cur.execute(f"SELECT token_fail_count FROM users WHERE email = {_P}", (email,))
         row = cur.fetchone()
         return row[0] if row else 0
 
 
+@_retry_on_deadlock
 def reset_token_fail(email: str) -> None:
     """Clear the failure count — the session is proven alive (valid check or fresh push)."""
     with _connection() as conn:
         cur = conn.cursor()
-        cur.execute(
-            f"UPDATE users SET token_fail_count = 0 WHERE email = {_P}", (email,)
-        )
+        cur.execute(f"UPDATE users SET token_fail_count = 0 WHERE email = {_P}", (email,))
 
 
+@_retry_on_deadlock
 def reassign_email_by_username(username: str, new_email: str) -> bool:
     """Move an existing user's subscription to a new email (username is identity).
 
@@ -340,6 +390,7 @@ def reassign_email_by_username(username: str, new_email: str) -> bool:
         return True
 
 
+@_retry_on_deadlock
 def set_refresh_token(username: str, refresh_token: str) -> bool:
     """Store the durable refresh_token (encrypted) for a user, keyed by username.
 
@@ -356,19 +407,43 @@ def set_refresh_token(username: str, refresh_token: str) -> bool:
         return cur.rowcount > 0
 
 
-def set_brief_days(username: str, brief_days: int) -> bool:
-    """Set the per-user brief window (7 or 14 days). A standalone setter rather than
-    a new upsert_user param, so the token-refresh callers can't clobber it. Returns
-    True if a row was updated."""
+@_retry_on_deadlock
+def update_brief_prefs(
+    username: str,
+    *,
+    brief_days: int | None = None,
+    brief_minute: int | None = None,
+    brief_dow: str | None = None,
+) -> bool:
+    """Update the brief send-time preferences (window / minute / days) in a single
+    statement. Standalone setters rather than upsert_user params, so the token-refresh
+    callers can't clobber them; folded into one UPDATE so a Settings save touches the
+    user row once instead of three times — fewer lock acquisitions, less deadlock
+    surface on the heavily-contended row. Only columns passed (non-None) are written.
+    Returns True if a row was updated."""
+    sets, params = [], []
+    if brief_days is not None:
+        sets.append(f"brief_days = {_P}")
+        params.append(brief_days)
+    if brief_minute is not None:
+        sets.append(f"brief_minute = {_P}")
+        params.append(brief_minute)
+    if brief_dow is not None:
+        sets.append(f"brief_dow = {_P}")
+        params.append(brief_dow)
+    if not sets:
+        return False
+    params.append(username)
     with _connection() as conn:
         cur = conn.cursor()
         cur.execute(
-            f"UPDATE users SET brief_days = {_P} WHERE username = {_P}",
-            (brief_days, username),
+            f"UPDATE users SET {', '.join(sets)} WHERE username = {_P}",
+            params,
         )
         return cur.rowcount > 0
 
 
+@_retry_on_deadlock
 def set_subscribed(email: str, subscribed: bool) -> bool:
     """Flip the brief subscription on/off, keyed by email. Returns True if a row
     was updated. Unsubscribe is a reversible pause (this flag) — never a row
@@ -428,6 +503,7 @@ def get_user_by_clerk_id(clerk_user_id: str) -> dict | None:
         return _decrypt_row(dict(row)) if row else None
 
 
+@_retry_on_deadlock
 def link_clerk_id_by_email(clerk_user_id: str, email: str) -> dict | None:
     """Claim a legacy row for this Clerk user by verified email (migration §8).
 
@@ -458,6 +534,7 @@ def remove_user(email: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+@_retry_on_deadlock
 def upsert_projects(user_id: int, projects: list[dict]) -> int:
     """Upsert the student's active units. ``projects`` items carry
     project_id, unit_code, unit_name, unit_end_date. Returns rows written."""
@@ -493,6 +570,7 @@ def upsert_projects(user_id: int, projects: list[dict]) -> int:
         return len(rows)
 
 
+@_retry_on_deadlock
 def prune_ended_projects(user_id: int, today_iso: str) -> None:
     """Drop units whose end_date has passed, and their tasks — keeps the store to
     the student's *current* enrolment so the brief never surfaces a dead unit."""
@@ -512,6 +590,7 @@ def prune_ended_projects(user_id: int, today_iso: str) -> None:
         )
 
 
+@_retry_on_deadlock
 def upsert_tasks(user_id: int, project_id: int, unit_code: str, tasks: list[dict]) -> int:
     """Upsert enriched task rows for one project. Leaves feedback_text/seen_at
     untouched (those are captured separately), so a task sweep never wipes feedback.
@@ -559,9 +638,8 @@ def upsert_tasks(user_id: int, project_id: int, unit_code: str, tasks: list[dict
         return len(rows)
 
 
-def set_task_feedback(
-    user_id: int, project_id: int, task_def_id: int, text: str
-) -> bool:
+@_retry_on_deadlock
+def set_task_feedback(user_id: int, project_id: int, task_def_id: int, text: str) -> bool:
     """Store the latest tutor feedback for one task. Update-only: if the task row
     isn't captured yet, the next task sweep will create it and feedback re-lands."""
     now = datetime.now().isoformat(timespec="seconds")

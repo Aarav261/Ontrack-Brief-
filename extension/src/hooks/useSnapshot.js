@@ -14,6 +14,8 @@ const STORAGE_KEYS = [
   'recently_completed_days',
   'max_todo_tasks',
   'brief_hour',
+  'brief_minute',
+  'brief_dow',
   'brief_weeks',
 ]
 
@@ -120,7 +122,10 @@ export function useSnapshot({ isLoaded, isSignedIn, getToken }) {
             auth_token: data.auth_token,
             // Durable token (stashed by background.js) so the row is created with it.
             refresh_token: data.refresh_token,
-            brief_hour: parseInt(data.brief_hour || '8', 10),
+            // NB: deliberately omit brief send-time fields (hour/minute/dow). This
+            // auto re-link runs on every popup open; sending them would let a stale
+            // or default value clobber the user's saved schedule. Only an explicit
+            // Settings save (saveSettings) sends them.
           },
         })
       } catch {
@@ -188,7 +193,7 @@ export function useSnapshot({ isLoaded, isSignedIn, getToken }) {
   // from Clerk server-side, so it's no longer entered here). Throws 'no-session'
   // when OnTrack creds are missing, matching the Settings panel's error handling.
   const saveSettings = useCallback(
-    async ({ hour, briefWeeks }) => {
+    async ({ hour, minute, dow, briefWeeks }) => {
       const stored = await getLocal(['auth_token', 'username', 'base_url', 'refresh_token'])
       if (!stored.auth_token || !stored.username) throw new Error('no-session')
       await api('/link-ontrack', {
@@ -200,14 +205,21 @@ export function useSnapshot({ isLoaded, isSignedIn, getToken }) {
           auth_token: stored.auth_token,
           refresh_token: stored.refresh_token,
           brief_hour: parseInt(hour, 10),
+          brief_minute: parseInt(minute, 10),
+          brief_dow: dow,
           brief_days: parseInt(briefWeeks, 10) * 7,
           // Deliberate "Enable email briefs" click — send one now even if the
           // user is already linked (the auto re-link on open omits this).
           send_brief_now: true,
         },
       })
-      await setLocal({ brief_hour: hour, brief_weeks: briefWeeks })
-      setStorageData((prev) => ({ ...prev, brief_hour: hour }))
+      await setLocal({
+        brief_hour: hour,
+        brief_minute: minute,
+        brief_dow: dow,
+        brief_weeks: briefWeeks,
+      })
+      setStorageData((prev) => ({ ...prev, brief_hour: hour, brief_minute: minute, brief_dow: dow }))
       setSubscribed(true) // enabling/saving (re)activates the subscription
       await patchCachedSubscribed(true)
     },

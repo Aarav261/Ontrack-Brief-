@@ -18,10 +18,10 @@ from core.db import (
     link_clerk_id_by_email,
     prune_ended_projects,
     reset_token_fail,
-    set_brief_days,
     set_refresh_token,
     set_subscribed,
     set_task_feedback,
+    update_brief_prefs,
     upsert_projects,
     upsert_tasks,
     upsert_user,
@@ -60,6 +60,47 @@ def _clamp_brief_days(raw) -> int:
     """The extension sends brief_days as weeks*7; the brief window is 1 or 2
     weeks, so clamp to {7, 14} with 14 the long-standing default."""
     return 7 if int(raw) <= 7 else 14
+
+
+_VALID_DOW = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _normalize_dow(raw) -> str | None:
+    """Normalize a requested send-days value into an APScheduler day_of_week string.
+
+    Accepts a CSV string ("mon,wed,fri"), a hyphen range ("mon-fri"), or a list of
+    day tokens; keeps only valid weekday tokens in canonical Mon→Sun order and
+    returns them comma-joined. Returns None for an empty/invalid selection so the
+    caller can fall back to the stored value rather than scheduling a brief that
+    never fires.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        text = raw.strip().lower()
+        if "-" in text:
+            start, _, end = text.partition("-")
+            i, j = (
+                _VALID_DOW.index(start) if start in _VALID_DOW else -1,
+                (_VALID_DOW.index(end) if end in _VALID_DOW else -1),
+            )
+            chosen = set(_VALID_DOW[i : j + 1]) if 0 <= i <= j else set()
+        else:
+            chosen = {t.strip()[:3] for t in text.split(",") if t.strip()}
+    else:
+        chosen = {str(t).strip().lower()[:3] for t in raw if str(t).strip()}
+    ordered = [d for d in _VALID_DOW if d in chosen]
+    return ",".join(ordered) if ordered else None
+
+
+def _brief_schedule_args(user: dict) -> tuple[int, int, str]:
+    """The (hour, minute, dow) triple schedule_brief needs, read from a user row with
+    safe fallbacks for rows that predate the minute/dow columns."""
+    return (
+        user["brief_hour"],
+        user.get("brief_minute", 0),
+        user.get("brief_dow") or "mon-fri",
+    )
 
 
 def _schedule_welcome_brief(user_id: int) -> None:
@@ -114,7 +155,7 @@ def refresh_token():
         _persist_valid_token(user, username, auth_token)
         if was_invalid:
             log.info("Token restored for %s — re-scheduling brief", username)
-            schedule_brief(user["id"], user["brief_hour"])
+            schedule_brief(user["id"], *_brief_schedule_args(user))
         else:
             log.info("Token refreshed via extension for %s", username)
 
@@ -148,7 +189,7 @@ def refresh_credential():
     if not user["token_valid"]:
         _persist_valid_token(user, username, user["auth_token"])
         log.info("Refresh token received for %s — restoring paused brief", username)
-        schedule_brief(user["id"], user["brief_hour"])
+        schedule_brief(user["id"], *_brief_schedule_args(user))
     else:
         log.info("Refresh token stored for %s", username)
 
@@ -196,7 +237,7 @@ def ingest():
         # which also removed their brief job. Restore it here so a pure-ingest
         # user isn't silently left without briefs until a server restart.
         log.info("ingest: restoring brief job for %s (was token_invalid)", user["email"])
-        schedule_brief(user_id, user["brief_hour"])
+        schedule_brief(user_id, *_brief_schedule_args(user))
 
     if kind == "projects":
         if not isinstance(payload, list):
@@ -276,11 +317,17 @@ def link_ontrack():
     username = (data.get("username") or "").strip()
     auth_token = (data.get("auth_token") or "").strip()
     try:
-        brief_hour = max(0, min(23, int(data.get("brief_hour", 8))))
         recently_days = max(1, int(data.get("recently_completed_days", 7)))
         max_todo = max(1, int(data.get("max_todo_tasks", 10)))
-        # Only present on a deliberate Settings save — the auto re-link on every
-        # popup open omits it, so we must not reset the user's choice.
+        # The brief send-time settings (hour/minute/day) are only present on a
+        # deliberate Settings save — the auto re-link on every popup open omits them,
+        # so we must NOT reset the user's choice. Parse to None when absent and
+        # resolve against the stored value below.
+        _raw_hour = data.get("brief_hour")
+        brief_hour = max(0, min(23, int(_raw_hour))) if _raw_hour is not None else None
+        _raw_minute = data.get("brief_minute")
+        brief_minute = max(0, min(59, int(_raw_minute))) if _raw_minute is not None else None
+        brief_dow = _normalize_dow(data.get("brief_dow"))
         brief_days = _clamp_brief_days(data["brief_days"]) if "brief_days" in data else None
     except (ValueError, TypeError):
         return {"ok": False, "error": "invalid numbers"}, 400
@@ -330,12 +377,22 @@ def link_ontrack():
     send_now = bool(data.get("send_brief_now"))
     was_paused = bool(existing) and not existing.get("subscribed", 1)
 
+    # Resolve each send-time field against the stored value so a bare popup-open
+    # auto-link (which omits them) never silently resets the user's schedule. Only a
+    # deliberate Settings save carries them.
+    stored_hour = existing.get("brief_hour", 8) if existing else 8
+    stored_minute = existing.get("brief_minute", 0) if existing else 0
+    stored_dow = (existing.get("brief_dow") if existing else None) or "mon-fri"
+    resolved_hour = brief_hour if brief_hour is not None else stored_hour
+    resolved_minute = brief_minute if brief_minute is not None else stored_minute
+    resolved_dow = brief_dow if brief_dow is not None else stored_dow
+
     user_id = upsert_user(
         base_url,
         username,
         auth_token,
         email,
-        brief_hour,
+        resolved_hour,
         recently_completed_days=recently_days,
         max_todo_tasks=max_todo,
         clerk_user_id=clerk_id,
@@ -345,10 +402,17 @@ def link_ontrack():
     if body_refresh_token:
         set_refresh_token(username, body_refresh_token)
 
-    # Apply a deliberate brief-window change from the Settings panel. Guarded on
-    # presence above so the auto re-link doesn't clobber a saved 7/14-day choice.
-    if brief_days is not None:
-        set_brief_days(username, brief_days)
+    # Apply deliberate brief-window / send-time changes from the Settings panel in a
+    # single UPDATE. Each value is None unless explicitly provided, so the auto
+    # re-link (which omits them) can't clobber a saved choice; folding them into one
+    # write keeps a Settings save to a single touch of the contended user row.
+    if brief_days is not None or brief_minute is not None or brief_dow is not None:
+        update_brief_prefs(
+            username,
+            brief_days=brief_days,
+            brief_minute=brief_minute,
+            brief_dow=brief_dow,
+        )
 
     # An explicit "Enable email briefs" click resumes a paused subscription.
     if send_now:
@@ -358,7 +422,7 @@ def link_ontrack():
     # bare popup open must NOT be silently resubscribed — keep their creds warm so
     # the snapshot works, but leave briefs off until they click enable.
     if send_now or not was_paused:
-        schedule_brief(user_id, brief_hour)
+        schedule_brief(user_id, resolved_hour, resolved_minute, resolved_dow)
         if is_first_link or send_now:
             _schedule_welcome_brief(user_id)
             log.info(
