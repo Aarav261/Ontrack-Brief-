@@ -101,22 +101,62 @@ def _remove_retired_jobs() -> None:
             pass
 
 
-def schedule_brief(user_id: int, brief_hour: int) -> None:
+def schedule_brief(
+    user_id: int,
+    brief_hour: int,
+    brief_minute: int = 0,
+    brief_dow: str = "mon-fri",
+) -> None:
+    """(Re)schedule a user's recurring brief — exactly one job per user.
+
+    Idempotent by construction: any existing job is removed first, then a single
+    fresh one is added. We do NOT use reschedule_job — with the DB-backed jobstore a
+    stale trigger persisted by an overlapping scheduler (e.g. during a deploy) could
+    otherwise survive alongside the new one, firing the brief at both the old and new
+    time. remove-then-add leaves no room for a second trigger.
+    """
     job_id = f"brief_{user_id}"
     trigger = CronTrigger(
-        day_of_week="mon-fri", hour=brief_hour, minute=0, timezone=_BRIEF_TZ
+        day_of_week=brief_dow,
+        hour=brief_hour,
+        minute=brief_minute,
+        timezone=_BRIEF_TZ,
     )
-    if scheduler.get_job(job_id):
-        scheduler.reschedule_job(job_id, trigger=trigger)
-    else:
-        scheduler.add_job(
-            run_brief,
-            trigger,
-            args=[user_id],
-            id=job_id,
-            misfire_grace_time=3600,
-            replace_existing=True,
-        )
+    try:
+        scheduler.remove_job(job_id)
+    except JobLookupError:
+        pass
+    scheduler.add_job(
+        run_brief,
+        trigger,
+        args=[user_id],
+        id=job_id,
+        misfire_grace_time=3600,
+        replace_existing=True,
+    )
+
+
+def _reconcile_brief_jobs(valid_user_ids: set[int]) -> None:
+    """Drop orphan brief jobs from the persistent jobstore.
+
+    Sibling of _remove_retired_jobs: any `brief_<n>` job whose user is no longer
+    subscribed (or no longer exists) is a leftover that would keep emailing on a
+    stale schedule. Removing them guarantees the only brief jobs running are the ones
+    schedule_brief just (re)created for current subscribers.
+    """
+    for job in scheduler.get_jobs():
+        if not job.id.startswith("brief_"):
+            continue
+        try:
+            uid = int(job.id.removeprefix("brief_"))
+        except ValueError:
+            continue
+        if uid not in valid_user_ids:
+            try:
+                scheduler.remove_job(job.id)
+                log.info("Removed orphan brief job %s from the jobstore", job.id)
+            except JobLookupError:
+                pass
 
 
 def startup() -> None:
@@ -126,12 +166,19 @@ def startup() -> None:
         log.error("Database initialisation failed: %s", exc, exc_info=True)
         return
 
+    scheduled_ids: set[int] = set()
     try:
         for user in get_all_users():
             if not user.get("subscribed", 1):
                 log.info("Skipping schedule for %s — unsubscribed (paused)", user["username"])
                 continue
-            schedule_brief(user["id"], user["brief_hour"])
+            schedule_brief(
+                user["id"],
+                user["brief_hour"],
+                user.get("brief_minute", 0),
+                user.get("brief_dow", "mon-fri"),
+            )
+            scheduled_ids.add(user["id"])
     except Exception as exc:
         log.error("Failed to restore scheduled jobs: %s", exc, exc_info=True)
 
@@ -139,3 +186,6 @@ def startup() -> None:
 
     # Evict the retired 20-min token-refresh poll if an older deploy persisted it.
     _remove_retired_jobs()
+    # Drop any orphan brief jobs (e.g. duplicate triggers left in the persistent
+    # jobstore by an overlapping scheduler) so each subscriber has exactly one.
+    _reconcile_brief_jobs(scheduled_ids)

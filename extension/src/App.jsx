@@ -63,6 +63,8 @@ export default function App() {
       {activeTab === 'settings' && storageData && isSignedIn ? (
         <Settings
           initialHour={storageData.brief_hour || '8'}
+          initialMinute={storageData.brief_minute || '0'}
+          initialDow={storageData.brief_dow || 'mon-fri'}
           initialBriefWeeks={storageData.brief_weeks || '1'}
           initialStripWeeks={storageData.strip_weeks || '1'}
           subscribed={subscribed}
