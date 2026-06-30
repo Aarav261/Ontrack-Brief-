@@ -20,6 +20,7 @@ from core.db import (
     get_user_by_username,
     link_clerk_id_by_email,
     prune_ended_projects,
+    reclaim_ontrack_username,
     reset_token_fail,
     set_refresh_token,
     set_subscribed,
@@ -434,6 +435,23 @@ def link_ontrack():
     # closes the chicken-and-egg with /refresh-credential for first-time users.
     if body_refresh_token:
         set_refresh_token(username, body_refresh_token)
+
+    # Enforce one OnTrack login per account. If another Clerk account previously
+    # linked this same OnTrack username, it left a duplicate row; /ingest (keyed on
+    # username alone) could then write to it instead of this account, so the
+    # snapshot — resolved by Clerk id — would show nothing. Evict those stale rows
+    # (and their captured data) now that this account holds the username, and drop
+    # their orphaned brief jobs. Idempotent: a no-op once there's a single row.
+    for evicted_id in reclaim_ontrack_username(username, user_id):
+        job_id = f"brief_{evicted_id}"
+        if scheduler.get_job(job_id):
+            scheduler.remove_job(job_id)
+        log.info(
+            "link-ontrack: reclaimed username %s for user %s — evicted duplicate account %s",
+            username,
+            user_id,
+            evicted_id,
+        )
 
     # Apply deliberate brief-window / send-time changes from the Settings panel in a
     # single UPDATE. Each value is None unless explicitly provided, so the auto
