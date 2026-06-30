@@ -97,7 +97,7 @@ def _as_of_note(as_of: str | None) -> str:
     try:
         stamp = date.fromisoformat(stamp).strftime("%b %d, %Y")
     except ValueError:
-        pass
+        stamp = "recently"
     return (
         f'<p style="margin:14px 0 0;color:#aaaaaa;font-size:11px;line-height:1.5">'
         f"Based on your OnTrack data as of {stamp}. Open OnTrack to refresh.</p>"

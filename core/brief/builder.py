@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 
 from core.constants import DONE, GRADE_WEIGHT, SUBMITTED, TODO, URGENT, WAITING
@@ -9,6 +10,8 @@ from core.ontrack import (
     fetch_last_feedback_direct,
     fetch_tasks_direct,
 )
+
+log = logging.getLogger(__name__)
 
 # Statuses kept OUT of the deterministic brief: work already handed in (SUBMITTED),
 # resolved (DONE), or handled face-to-face (WAITING = discuss/demonstrate, which we
@@ -42,9 +45,19 @@ def pending_task_entries(rows: list[dict], today: date, base_url: str) -> list[d
         try:
             due = date.fromisoformat(deadline)
         except ValueError:
+            log.warning(
+                "pending_task_entries: invalid deadline %r for task %r — skipping",
+                deadline,
+                r.get("name") or r.get("abbreviation"),
+            )
             continue
         abbrev = r.get("abbreviation") or ""
-        url = f"{base}/projects/{r['project_id']}/dashboard/{abbrev}" if base and abbrev else None
+        pid = r.get("project_id")
+        url = (
+            f"{base}/projects/{pid}/dashboard/{abbrev}"
+            if base and abbrev and pid is not None
+            else None
+        )
         entries.append(
             {
                 "task": {

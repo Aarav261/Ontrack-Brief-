@@ -4,9 +4,10 @@
  * a new token on every response, so reading request headers gives a stale value.
  */
 (function () {
-  let lastToken    = null;
-  let lastUsername = null;
-  let _swept       = false; // only sweep once per page load
+  let lastToken       = null;
+  let lastUsername    = null;
+  let _swept          = false; // only sweep once per page load
+  let _pendingProjects = null; // projects captured before first token — flushed on emit
 
   function emit(token, username) {
     if (!token || !username) return;
@@ -16,6 +17,12 @@
     window.dispatchEvent(new CustomEvent("ontrack-auth-captured", {
       detail: { auth_token: token, username: username }
     }));
+    // Flush a sweep that was deferred because the token wasn't available yet.
+    if (_pendingProjects) {
+      const projects = _pendingProjects;
+      _pendingProjects = null;
+      sweepProjectTasks(projects);
+    }
   }
 
   // Track username from outgoing request headers (it never rotates)
@@ -78,7 +85,11 @@
   // needing to click into each unit. Uses the already-captured auth token.
   // Guard (_swept) prevents re-triggering on subsequent project-list refreshes.
   function sweepProjectTasks(projects) {
-    if (_swept || !lastToken || !lastUsername) return;
+    if (_swept) return;
+    if (!lastToken || !lastUsername) {
+      _pendingProjects = projects; // defer until first token is captured via emit()
+      return;
+    }
     _swept = true;
     const today = new Date().toISOString().slice(0, 10);
     const headers = {
@@ -161,10 +172,9 @@
       const username = h["username"] || lastUsername;
       if (respToken && username) {
         emit(respToken, username);
-      } else {
-        // Fallback: use request token (first page load before any response)
-        emit(h["auth-token"], h["username"]);
       }
+      // No fallback to request headers: the request token is already rotated (stale)
+      // once the response arrives. Emit only when we have a fresh response token.
 
       // Capture the response body for the data endpoints we care about.
       // Angular's HttpClient sets responseType="json", and reading responseText
