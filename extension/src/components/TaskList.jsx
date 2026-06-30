@@ -51,13 +51,14 @@ export default function TaskList({ days }) {
     .sort((a, b) => a.offset - b.offset)
 
   const count = allTasks.length
+  const windowDays = (days || []).length || 7
 
   return (
     <div className="task-list-section">
       <div className="task-list-header"></div>
 
       {count === 0 ? (
-        <div className="task-empty">Nothing due in the next 7 days</div>
+        <div className="task-empty">Nothing due in the next {windowDays} days</div>
       ) : (
         allTasks.map((t, i) => {
           const cfg = GRADE_CONFIG[t.grade] || FALLBACK_CFG

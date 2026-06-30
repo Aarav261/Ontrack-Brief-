@@ -67,10 +67,42 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true; // keep message channel open for async response
 });
 
+// Dedup identical captures: OnTrack's SPA re-fetches the same project/unit data
+// on every navigation, so without this the extension re-POSTs unchanged payloads
+// and a single browsing session can trip the server's /ingest rate limit. Keyed
+// by kind + the captured identifier; value is a hash of the payload so a real
+// data change still pushes. Lives in the (ephemeral) service-worker scope — a
+// worker restart just allows one harmless re-send.
+const lastIngestHash = new Map();
+
+function ingestDedupKey(kind, payload) {
+  const p = payload || {};
+  if (kind === "project_tasks") return `project_tasks:${p.project_id}`;
+  if (kind === "feedback") return `feedback:${p.project_id}:${p.task_def_id}`;
+  return kind; // "projects" — one per session
+}
+
+// Small, fast, collision-tolerant string hash (djb2). Exact equality isn't
+// required — a missed dedup only costs one extra POST.
+function hashPayload(payload) {
+  const s = JSON.stringify(payload);
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return `${s.length}:${h}`;
+}
+
 // Forward captured OnTrack data to /ingest. Separate listener so the token path
 // above stays untouched; both run on every message and ignore kinds not theirs.
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type !== "ingest") return false;
+
+  const dedupKey = ingestDedupKey(msg.kind, msg.payload);
+  const hash = hashPayload(msg.payload);
+  if (lastIngestHash.get(dedupKey) === hash) {
+    sendResponse({ ok: true, deduped: true });
+    return true;
+  }
+  lastIngestHash.set(dedupKey, hash);
 
   fetch(`${APP_URL}/ingest`, {
     method: "POST",
@@ -83,7 +115,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   })
     .then((r) => r.json())
     .then(() => sendResponse({ ok: true }))
-    .catch(() => sendResponse({ ok: false }));
+    .catch(() => {
+      // Push failed — drop the cached hash so the next identical capture retries
+      // instead of being silently deduped away.
+      lastIngestHash.delete(dedupKey);
+      sendResponse({ ok: false });
+    });
 
   return true; // async response
 });

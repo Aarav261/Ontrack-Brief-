@@ -5,10 +5,13 @@ from datetime import date, datetime, timedelta
 import requests
 from apscheduler.triggers.date import DateTrigger
 from flask import Blueprint, g, jsonify, request
+from flask_limiter.util import get_remote_address
 
 from core.brief.builder import is_hidden
 from core.clerk_auth import require_clerk_auth
 from core.db import (
+    delete_tasks_for_inactive_projects,
+    get_active_project_ids,
     get_capture_meta,
     get_feedback_entries,
     get_pending_tasks,
@@ -196,8 +199,23 @@ def refresh_credential():
     return {"ok": True}
 
 
+def _ingest_rate_key():
+    """Per-student rate-limit bucket for /ingest.
+
+    The endpoint is unauthenticated and, in Docker and behind Railway's proxy,
+    every session arrives from one shared IP (the gateway / proxy). Keying the
+    limit on IP (the limiter default) therefore lets one busy session — whose
+    project sweep fans out into many small pushes — exhaust the limit for every
+    other student. Key on the body-supplied username so each student gets their
+    own bucket, falling back to IP when the body has no username (malformed
+    request, which the handler rejects anyway)."""
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    return f"ingest:{username}" if username else get_remote_address()
+
+
 @main_bp.route("/ingest", methods=["POST"])
-@limiter.limit("120 per minute")
+@limiter.limit("120 per minute", key_func=_ingest_rate_key)
 def ingest():
     """Receive OnTrack data captured off the student's own session and store it.
 
@@ -259,12 +277,27 @@ def ingest():
         projects = [p for p in projects if p["project_id"] is not None]
         stored = upsert_projects(user_id, projects)
         prune_ended_projects(user_id, today.isoformat())
+        # Drop tasks left behind by now-ended projects (past trimesters) so the
+        # snapshot/brief never read stale rows. Pairs with the project_tasks guard
+        # below — together they keep the DB to the active trimester even if an old
+        # extension build keeps sweeping every project.
+        removed = delete_tasks_for_inactive_projects(user_id)
+        if removed:
+            log.info("ingest: pruned %d task(s) for ended projects (user %s)", removed, user_id)
         return {"ok": True, "stored": stored}
 
     if kind == "project_tasks":
         project_id = payload.get("project_id")
         if project_id is None:
             return {"ok": False, "error": "missing project_id"}, 400
+        # Reject pushes for past-trimester projects. The projects ingest only keeps
+        # active (non-ended) units, so once the user has any projects stored, a
+        # project_id absent from that set is an ended unit an older extension build
+        # is still sweeping — store nothing. The `active_ids` empty case allows the
+        # race where project_tasks arrives before the projects list has landed.
+        active_ids = get_active_project_ids(user_id)
+        if active_ids and project_id not in active_ids:
+            return {"ok": True, "stored": 0, "skipped": "inactive_project"}
         # Guard: enrich_tasks and append_missing_tasks both use
         # t["task_definition_id"] (hard key access). Drop any task dicts the
         # extension sent without that field before passing them in.

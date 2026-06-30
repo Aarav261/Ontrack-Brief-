@@ -51,16 +51,21 @@ export function useSnapshot({ isLoaded, isSignedIn, getToken }) {
       const cached = (await getLocal([SNAPSHOT_KEY]))[SNAPSHOT_KEY]
       const hasCache = !!cached?.data
       const fresh = hasCache && Date.now() - cached.ts < SNAPSHOT_TTL_MS
+      // The cache isn't keyed by window size, so a fresh 7-day snapshot must not
+      // satisfy a 14-day request — otherwise switching to the 2-week strip paints
+      // the stale 7-day data and silently drops days 8–14 (and their tasks).
+      const coversWindow = hasCache && (cached.data.days?.length || 0) >= numDays
 
       if (hasCache) {
         // Stale-while-revalidate: paint cached data instantly (any age), no
-        // blocking spinner. Skip the network entirely while still fresh.
+        // blocking spinner. Skip the network entirely while still fresh AND the
+        // cached window is at least as wide as the one we need.
         setDays(cached.data.days)
         setFeedback(cached.data.feedback || [])
         if (typeof cached.data.subscribed === 'boolean') setSubscribed(cached.data.subscribed)
         setStripLoading(false)
         setFooterSync(syncLabel(cached.ts))
-        if (!force && fresh) return
+        if (!force && fresh && coversWindow) return
         setFooterSync('Refreshing…') // background revalidate cue
       } else {
         // First load on this device — nothing to show yet.
