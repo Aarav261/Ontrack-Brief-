@@ -6,8 +6,6 @@ route (extension-capture path) so both normalise captured data identically.
 
 from __future__ import annotations
 
-from datetime import date
-
 _GRADE_LABELS = {
     0: "P (Pass)",
     1: "C (Credit)",
@@ -29,19 +27,24 @@ def enrich_tasks(tasks: list[dict], task_defs: list[dict]) -> None:
         )
         t["target_grade_label"] = _GRADE_LABELS.get(t.get("target_grade"), "P (Pass)")
         t["due_date"] = t.get("due_date") or td.get("target_date") or td.get("due_date")
-        t["deadline"] = t.get("deadline") or td.get("due_date")
+        # Rank/window by the target_date the student actually sees in OnTrack, not
+        # the hard due_date (often the late-penalty cutoff / end of trimester). Fall
+        # back to due_date when a definition has no target.
+        t["deadline"] = t.get("deadline") or td.get("target_date") or td.get("due_date")
         t["status_label"] = t.get("status_label") or t.get("status", "").replace("_", " ").title()
 
 
 def append_missing_tasks(tasks: list[dict], task_defs: list[dict]) -> None:
-    """Synthesise not-yet-started task rows for any released definition the
-    student hasn't engaged with yet. Mutates ``tasks`` in place."""
+    """Synthesise not-yet-started task rows for any definition the student hasn't
+    engaged with yet. Mutates ``tasks`` in place.
+
+    Includes definitions whose ``start_date`` is still in the future: this is a
+    plan-ahead brief, so an upcoming task should surface as soon as it has a
+    target date. The deadline window (in the snapshot/brief) is what bounds which
+    of these actually display, so synthesising them here never over-shows."""
     submitted_def_ids = {t["task_definition_id"] for t in tasks}
-    today = date.today().isoformat()
     for td in task_defs:
         if td["id"] in submitted_def_ids:
-            continue
-        if td.get("start_date", "0000") > today:
             continue
         tasks.append(
             {
@@ -54,7 +57,7 @@ def append_missing_tasks(tasks: list[dict], task_defs: list[dict]) -> None:
                 "target_grade": td.get("target_grade"),
                 "target_grade_label": _GRADE_LABELS.get(td.get("target_grade"), "P (Pass)"),
                 "due_date": td.get("target_date") or td.get("due_date"),
-                "deadline": td.get("due_date"),
+                "deadline": td.get("target_date") or td.get("due_date"),
                 "submission_date": None,
                 "completion_date": None,
                 "extensions": 0,

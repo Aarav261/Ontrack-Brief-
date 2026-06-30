@@ -80,6 +80,7 @@
   function sweepProjectTasks(projects) {
     if (_swept || !lastToken || !lastUsername) return;
     _swept = true;
+    const today = new Date().toISOString().slice(0, 10);
     const headers = {
       "Auth-Token": lastToken,
       "Username": lastUsername,
@@ -87,6 +88,13 @@
     };
     projects.forEach(function (proj) {
       if (!proj.id) return;
+      // /api/projects returns every project the student has ever enrolled in,
+      // across all trimesters. Sweeping them all floods /ingest with stale tasks
+      // (tripping the server rate limit) and crowds out the current trimester's
+      // data. Skip ended units — same filter the server applies when storing the
+      // projects list — so the sweep only fetches active units.
+      const endDate = proj.unit && proj.unit.end_date;
+      if (endDate && endDate < today) return;
       const url = `${location.origin}/api/projects/${proj.id}`;
       // Use window.fetch (our overridden version) so the response flows through
       // handleData automatically — no manual wiring needed.
