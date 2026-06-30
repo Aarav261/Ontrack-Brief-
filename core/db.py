@@ -526,6 +526,32 @@ def remove_user(email: str) -> None:
         cur.execute(f"DELETE FROM users WHERE email = {_P}", (email,))
 
 
+@_retry_on_deadlock
+def reclaim_ontrack_username(username: str, keep_user_id: int) -> list[int]:
+    """Enforce one OnTrack login per account: an OnTrack username uniquely
+    identifies a student, but `username` isn't a DB unique key, so two Clerk
+    accounts linking the same login create two rows. /ingest resolves by username
+    alone and can then write to the wrong row, so the snapshot (resolved by Clerk
+    id) shows nothing. When an account (re)links a username, evict every *other*
+    row holding it — last verified OnTrack linker wins — and delete that row's
+    captured tasks/projects. Returns the evicted user ids so the caller can drop
+    their scheduled brief jobs."""
+    with _connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT id FROM users WHERE username = {_P} AND id <> {_P}",
+            (username, keep_user_id),
+        )
+        evicted = [row[0] for row in cur.fetchall()]
+        if not evicted:
+            return []
+        placeholders = ",".join([_P] * len(evicted))
+        cur.execute(f"DELETE FROM tasks WHERE user_id IN ({placeholders})", tuple(evicted))
+        cur.execute(f"DELETE FROM projects WHERE user_id IN ({placeholders})", tuple(evicted))
+        cur.execute(f"DELETE FROM users WHERE id IN ({placeholders})", tuple(evicted))
+        return evicted
+
+
 # ---------------------------------------------------------------------------
 # Deterministic-brief storage — captured OnTrack tasks/deadlines (no OnTrack call
 # at read time). See docs/DETERMINISTIC_BRIEF_PLAN.md. ON CONFLICT … DO UPDATE is
