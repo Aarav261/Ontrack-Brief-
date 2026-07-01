@@ -39,41 +39,52 @@ def run_brief(user_id: int, *, confirm_if_empty: bool = False) -> None:
     when there's nothing to show, send a one-off confirmation instead of returning
     silently, so the deliberate click gets feedback. The daily cron leaves it False.
     """
-    user = get_user_by_id(user_id)
-    if not user:
-        log.error("run_brief: no user found for id=%s", user_id)
-        return
-    if not user.get("subscribed", 1):
-        # Defensive: a paused user should have no scheduled job, but never email
-        # someone who has unsubscribed even if a stale job somehow fires.
-        log.info("run_brief: %s is unsubscribed — skipping", user["email"])
-        return
+    try:
+        user = get_user_by_id(user_id)
+        if not user:
+            log.error("run_brief: no user found for id=%s", user_id)
+            return
+        if not user.get("subscribed", 1):
+            # Defensive: a paused user should have no scheduled job, but never email
+            # someone who has unsubscribed even if a stale job somehow fires.
+            log.info("run_brief: %s is unsubscribed — skipping", user["email"])
+            return
 
-    email = user["email"]
-    window_days = user.get("brief_days") or _DEFAULT_WINDOW_DAYS
-    today = date.today()
-    end = today + timedelta(days=window_days)
+        email = user["email"]
+        window_days = user.get("brief_days") or _DEFAULT_WINDOW_DAYS
+        today = date.today()
+        end = today + timedelta(days=window_days)
 
-    task_count, last_seen = get_capture_meta(user_id)
-    if task_count == 0:
-        # Cold start: nothing captured yet (the student hasn't opened OnTrack with
-        # the extension since subscribing). Don't send an empty brief every day —
-        # confirm the deliberate enable click, otherwise stay quiet until data lands.
-        if confirm_if_empty:
-            log.info("No captured tasks for %s yet — sending briefs-enabled confirmation", email)
-            send_briefs_enabled_email(email)
+        task_count, last_seen = get_capture_meta(user_id)
+        if task_count == 0:
+            # Cold start: nothing captured yet (the student hasn't opened OnTrack with
+            # the extension since subscribing). Don't send an empty brief every day —
+            # confirm the deliberate enable click, otherwise stay quiet until data lands.
+            if confirm_if_empty:
+                log.info(
+                    "No captured tasks for %s yet — sending briefs-enabled confirmation", email
+                )
+                ok = send_briefs_enabled_email(email)
+                if not ok:
+                    log.error("run_brief: failed to send briefs-enabled confirmation to %s", email)
+            else:
+                log.info("run_brief: no captured tasks for %s yet — skipping", email)
+            return
+
+        rows = get_pending_tasks(user_id, today.isoformat(), end.isoformat())
+        entries = pending_task_entries(rows, today, user["base_url"])
+        due_this_week = sum(1 for e in entries if (e["due"] - today).days <= _THIS_WEEK_DAYS)
+
+        # The user has captured data, so send the brief even when nothing is due in the
+        # window — render_html shows the "nothing due" state, same as before.
+        html = render_html(entries, today, window_days=window_days, as_of=last_seen)
+        ok = send_brief_to(html, email, today, due_this_week)
+        if not ok:
+            log.error("run_brief: email delivery failed for user_id=%s (%s)", user_id, email)
         else:
-            log.info("run_brief: no captured tasks for %s yet — skipping", email)
-        return
-
-    rows = get_pending_tasks(user_id, today.isoformat(), end.isoformat())
-    entries = pending_task_entries(rows, today, user["base_url"])
-    due_this_week = sum(1 for e in entries if (e["due"] - today).days <= _THIS_WEEK_DAYS)
-
-    # The user has captured data, so send the brief even when nothing is due in the
-    # window — render_html shows the "nothing due" state, same as before.
-    html = render_html(entries, today, window_days=window_days, as_of=last_seen)
-    send_brief_to(html, email, today, due_this_week)
+            log.info("run_brief: brief sent to %s (%d tasks due this week)", email, due_this_week)
+    except Exception as exc:
+        log.error("run_brief failed for user_id=%s: %s", user_id, exc, exc_info=True)
 
 
 # The 20-min token-refresh poll has been retired. run_brief now mints a fresh

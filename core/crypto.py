@@ -88,4 +88,4 @@ def decrypt(value: str | None) -> str | None:
         return _fernet.decrypt(value[len(_PREFIX) :].encode()).decode()
     except InvalidToken:
         log.error("Failed to decrypt token — wrong TOKEN_ENCRYPTION_KEY for this data?")
-        return value
+        return None

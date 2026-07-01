@@ -540,8 +540,11 @@ def api_snapshot():
     for r in get_pending_tasks(user_id, today.isoformat(), end.isoformat()):
         if is_hidden(r):
             continue
+        deadline = r.get("deadline") or ""
+        if not deadline:
+            continue
         try:
-            offset = (date.fromisoformat(r["deadline"]) - today).days
+            offset = (date.fromisoformat(deadline) - today).days
         except (ValueError, TypeError):
             continue
         if not 0 <= offset < days_count:
@@ -553,8 +556,8 @@ def api_snapshot():
                 "abbreviation": abbrev,
                 "unit": r.get("unit_code") or "",
                 "grade": r.get("target_grade_label") or "P (Pass)",
-                "due_date": r["deadline"],
-                "url": f"{base_url}/projects/{r['project_id']}/dashboard/{abbrev}",
+                "due_date": deadline,
+                "url": f"{base_url}/projects/{r.get('project_id', '')}/dashboard/{abbrev}",
             }
         )
 
@@ -569,7 +572,7 @@ def api_snapshot():
                 "unit": r.get("unit_code") or "",
                 "task": r.get("name") or abbrev,
                 "text": trimmed,
-                "url": f"{base_url}/projects/{r['project_id']}/dashboard/{abbrev}",
+                "url": f"{base_url}/projects/{r.get('project_id', '')}/dashboard/{abbrev}",
             }
         )
 

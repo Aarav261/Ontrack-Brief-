@@ -41,7 +41,7 @@ chrome.cookies.onChanged.addListener(({ cookie, removed }) => {
   if (removed) return;
   if (cookie.name !== "refresh_token") return;
   if (!cookie.domain.includes("ontrack.deakin.edu.au")) return;
-  chrome.storage.local.get("username", ({ username }) => {
+  chrome.storage.local.get("username").then(({ username }) => {
     // username never changes across a re-login, so the stored one is still valid.
     if (username) pushRefreshToken(username);
   });
@@ -102,7 +102,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({ ok: true, deduped: true });
     return true;
   }
-  lastIngestHash.set(dedupKey, hash);
+  // Do NOT cache the hash until the server confirms receipt — premature caching
+  // would cause a failed push to be silently deduped away on the next retry.
 
   fetch(`${APP_URL}/ingest`, {
     method: "POST",
@@ -114,11 +115,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }),
   })
     .then((r) => r.json())
-    .then(() => sendResponse({ ok: true }))
+    .then(() => {
+      lastIngestHash.set(dedupKey, hash); // only cache once server has accepted it
+      sendResponse({ ok: true });
+    })
     .catch(() => {
-      // Push failed — drop the cached hash so the next identical capture retries
-      // instead of being silently deduped away.
-      lastIngestHash.delete(dedupKey);
+      // Hash was never set, so the next identical capture will retry naturally.
       sendResponse({ ok: false });
     });
 

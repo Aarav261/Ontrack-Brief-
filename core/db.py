@@ -292,7 +292,10 @@ def upsert_user(
                     clerk_user_id,
                 ),
             )
-            return cur.fetchone()[0]
+            row = cur.fetchone()
+            if row is None:
+                raise RuntimeError(f"upsert_user: RETURNING id returned no row for email={email!r}")
+            return row[0]
         else:
             cur.execute(
                 f"""
@@ -321,7 +324,12 @@ def upsert_user(
                     clerk_user_id,
                 ),
             )
-            return cur.execute(f"SELECT id FROM users WHERE email = {_P}", (email,)).fetchone()[0]
+            row = cur.execute(f"SELECT id FROM users WHERE email = {_P}", (email,)).fetchone()
+            if row is None:
+                raise RuntimeError(
+                    f"upsert_user: user row missing after upsert for email={email!r}"
+                )
+            return row[0]
 
 
 @_retry_on_deadlock
