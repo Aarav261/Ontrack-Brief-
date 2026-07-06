@@ -11,7 +11,6 @@ from core.brief.builder import is_hidden
 from core.clerk_auth import require_clerk_auth
 from core.db import (
     delete_tasks_for_inactive_projects,
-    get_active_project_ids,
     get_capture_meta,
     get_feedback_entries,
     get_pending_tasks,
@@ -291,14 +290,14 @@ def ingest():
         project_id = payload.get("project_id")
         if project_id is None:
             return {"ok": False, "error": "missing project_id"}, 400
-        # Reject pushes for past-trimester projects. The projects ingest only keeps
-        # active (non-ended) units, so once the user has any projects stored, a
-        # project_id absent from that set is an ended unit an older extension build
-        # is still sweeping — store nothing. The `active_ids` empty case allows the
-        # race where project_tasks arrives before the projects list has landed.
-        active_ids = get_active_project_ids(user_id)
-        if active_ids and project_id not in active_ids:
-            return {"ok": True, "stored": 0, "skipped": "inactive_project"}
+        # Past-trimester pushes (an older extension build still sweeping an ended
+        # unit) are cleaned up by prune_ended_projects/delete_tasks_for_inactive_projects
+        # on the next "projects" ingest, not rejected here. An eager active_ids
+        # check used to reject pushes for a project not yet present in `projects`,
+        # but project_tasks and projects land as independent concurrent requests —
+        # a returning student's current-trimester project_tasks push routinely beat
+        # its own projects ingest to the DB, got misclassified as "inactive", and
+        # (compounded by the extension's ingest dedup) never got stored at all.
         # Guard: enrich_tasks and append_missing_tasks both use
         # t["task_definition_id"] (hard key access). Drop any task dicts the
         # extension sent without that field before passing them in.

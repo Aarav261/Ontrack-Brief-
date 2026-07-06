@@ -731,17 +731,6 @@ def get_unit_code(user_id: int, project_id: int) -> str | None:
         return row[0] if row else None
 
 
-def get_active_project_ids(user_id: int) -> set[int]:
-    """Project IDs currently stored for the user. The projects ingest only keeps
-    non-ended units (and prune_ended_projects drops the rest), so this is the set
-    of *active* projects — used to reject task pushes for past-trimester projects
-    that an older extension build would otherwise still sweep."""
-    with _connection() as conn:
-        cur = conn.cursor()
-        cur.execute(f"SELECT project_id FROM projects WHERE user_id = {_P}", (user_id,))
-        return {row[0] for row in cur.fetchall()}
-
-
 def delete_tasks_for_inactive_projects(user_id: int) -> int:
     """Delete task rows whose project is no longer in the user's active projects
     (e.g. past-trimester tasks left behind after prune_ended_projects). Returns the
