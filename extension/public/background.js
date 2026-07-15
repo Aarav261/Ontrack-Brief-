@@ -3,7 +3,25 @@ importScripts("config.js");
 
 const ONTRACK_URL = "https://ontrack.deakin.edu.au";
 
-chrome.runtime.onInstalled.addListener(() => {
+// Chrome only runs content_scripts on NEW navigations after install/update — a
+// tab that was already open on OnTrack (very likely, since checking tasks is
+// why a student would have it open) never gets content.js/injected.js without
+// a manual reload. Backfill it into any already-open matching tab so a fresh
+// install captures data immediately instead of silently doing nothing until
+// the student happens to reload or renavigate.
+chrome.runtime.onInstalled.addListener(async () => {
+  let tabs;
+  try {
+    tabs = await chrome.tabs.query({ url: "https://ontrack.deakin.edu.au/*" });
+  } catch {
+    return; // host permission not yet granted or tabs API unavailable
+  }
+  for (const tab of tabs) {
+    if (!tab.id) continue;
+    chrome.scripting
+      .executeScript({ target: { tabId: tab.id }, files: ["config.js", "content.js"] })
+      .catch(() => {}); // e.g. a chrome:// or restricted tab matched unexpectedly
+  }
 });
 
 // Read the durable refresh_token cookie (HttpOnly — only chrome.cookies can see
@@ -114,12 +132,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       payload: msg.payload,
     }),
   })
-    .then((r) => r.json())
-    .then((d) => {
-      // Only cache once the server actually stored it — a `skipped` response
-      // (e.g. rejected as an inactive project) must not be treated as sent, or
-      // this dedup would permanently suppress a push that never landed.
-      if (!d || !d.skipped) lastIngestHash.set(dedupKey, hash);
+    .then((r) => r.json().then((d) => ({ httpOk: r.ok, d })))
+    .then(({ httpOk, d }) => {
+      // Only cache once the server actually stored it. fetch() doesn't reject on
+      // HTTP error status (e.g. 404 "not subscribed" while the account is still
+      // being linked), and a `skipped` response (e.g. rejected as an inactive
+      // project) isn't a store either — either one must not be treated as sent,
+      // or this dedup would permanently suppress a push that never landed.
+      if (httpOk && d && d.ok && !d.skipped) lastIngestHash.set(dedupKey, hash);
       sendResponse({ ok: true });
     })
     .catch(() => {
