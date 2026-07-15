@@ -115,8 +115,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }),
   })
     .then((r) => r.json())
-    .then(() => {
-      lastIngestHash.set(dedupKey, hash); // only cache once server has accepted it
+    .then((d) => {
+      // Only cache once the server actually stored it — a `skipped` response
+      // (e.g. rejected as an inactive project) must not be treated as sent, or
+      // this dedup would permanently suppress a push that never landed.
+      if (!d || !d.skipped) lastIngestHash.set(dedupKey, hash);
       sendResponse({ ok: true });
     })
     .catch(() => {
