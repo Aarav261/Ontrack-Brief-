@@ -153,7 +153,27 @@ export function useSnapshot({ isLoaded, isSignedIn, getToken }) {
         setStatus({ type: 'ok', text: `Logged in as ${data.username}` })
         linkAndLoad(data)
       } else {
-        setStatus({ type: 'warning', text: 'Open OnTrack — your tasks will appear automatically' })
+        // No stored session — the first-run case. Don't just tell the student to
+        // go open OnTrack: if they're logged in, the cookies are already in the
+        // browser and background.js can mint a session from them right now. Only
+        // fall back to the prompt when that genuinely finds nothing.
+        setStatus({ type: 'warning', text: 'Looking for your OnTrack session…' })
+        const giveUp = () =>
+          setStatus({ type: 'warning', text: 'Open OnTrack — your tasks will appear automatically' })
+        chrome.runtime
+          .sendMessage({ type: 'prime' })
+          .then((res) => {
+            if (!res || !res.ok) return giveUp()
+            // Re-read: this effect runs once, so without this the popup would sit
+            // on the first-run screen until it was closed and reopened.
+            return getLocal(STORAGE_KEYS).then((fresh) => {
+              setStorageData(fresh)
+              if (!fresh.auth_token || !fresh.username) return giveUp()
+              setStatus({ type: 'ok', text: `Logged in as ${fresh.username}` })
+              return linkAndLoad(fresh)
+            })
+          })
+          .catch(giveUp)
       }
     })
   }, [isLoaded, isSignedIn, linkAndLoad])

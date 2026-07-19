@@ -9,19 +9,81 @@ const ONTRACK_URL = "https://ontrack.deakin.edu.au";
 // a manual reload. Backfill it into any already-open matching tab so a fresh
 // install captures data immediately instead of silently doing nothing until
 // the student happens to reload or renavigate.
-chrome.runtime.onInstalled.addListener(async () => {
-  let tabs;
+// Capture an OnTrack session from the cookies the browser already holds — no
+// open tab, no content script, no waiting for the page to make a request.
+// /api/auth/access-token is the one OnTrack endpoint that authenticates off
+// cookies (refresh_token + username, both HttpOnly, so only chrome.cookies can
+// see them) and it hands back an auth_token the data endpoints accept as a
+// header. That's what lets a first run work even with OnTrack closed.
+//
+// Returns true if a session was captured and stored.
+async function primeFromCookies() {
+  let username = null;
   try {
-    tabs = await chrome.tabs.query({ url: "https://ontrack.deakin.edu.au/*" });
+    const c = await chrome.cookies.get({
+      url: `${ONTRACK_URL}/api/auth`,
+      name: "username",
+    });
+    username = (c && c.value) || null;
   } catch {
-    return; // host permission not yet granted or tabs API unavailable
+    return false; // cookies API unavailable
   }
-  for (const tab of tabs) {
-    if (!tab.id) continue;
-    chrome.scripting
-      .executeScript({ target: { tabId: tab.id }, files: ["config.js", "content.js"] })
-      .catch(() => {}); // e.g. a chrome:// or restricted tab matched unexpectedly
+  if (!username) return false; // not signed in to OnTrack at all
+
+  try {
+    const r = await fetch(`${ONTRACK_URL}/api/auth/access-token`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      // Must stay false: minting with delete_auth_token would invalidate the
+      // token the student's own OnTrack tab is holding, breaking the live page.
+      body: JSON.stringify({ delete_auth_token: false }),
+    });
+    if (!r.ok) return false;
+    const payload = await r.json();
+    // OnTrack answers 201 with a literal `null` body when the refresh_token has
+    // expired — nothing to capture. A later re-login fires cookies.onChanged.
+    if (!payload || typeof payload !== "object") return false;
+    const auth_token =
+      payload.auth_token || payload.access_token || payload.token;
+    if (!auth_token) return false;
+
+    // This is what the popup gates its whole view on (see useSnapshot).
+    await chrome.storage.local.set({
+      auth_token,
+      username,
+      base_url: ONTRACK_URL,
+    });
+    await pushRefreshToken(username);
+    await fetch(`${APP_URL}/refresh-token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ auth_token, username }),
+    }).catch(() => {});
+    return true;
+  } catch {
+    // Chrome may withhold the SameSite=Strict cookies from an extension-initiated
+    // request; the caller falls back to priming from inside a real page.
+    return false;
   }
+}
+
+// Let the popup trigger a capture on first open, rather than telling the student
+// to go open OnTrack when the cookies are usually already sitting right there.
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type !== "prime") return false;
+  primeFromCookies()
+    .then((ok) => sendResponse({ ok }))
+    .catch(() => sendResponse({ ok: false }));
+  return true; // async response
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  // Capture straight from the OnTrack cookies, so a fresh install works even
+  // with OnTrack closed and without waiting for the page to make a request.
+  // The popup triggers the same thing on first open (see the "prime" message
+  // above), which covers installing before ever logging in to OnTrack.
+  primeFromCookies();
 });
 
 // Read the durable refresh_token cookie (HttpOnly — only chrome.cookies can see
