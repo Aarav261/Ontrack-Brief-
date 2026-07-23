@@ -40,10 +40,35 @@ if _USE_PG:
 _P = "%s" if _USE_PG else "?"
 
 
+def _pg_connect():
+    """Connect to Postgres, retrying transient failures with backoff.
+
+    Railway's private-network hostname (postgres.railway.internal) is only
+    resolvable from inside its private network, and that DNS can hiccup
+    briefly right after a deploy/restart even when both services are up.
+    A bare psycopg2.connect() has no retry, so those blips surface as 500s.
+    """
+    attempts = 5
+    for i in range(attempts):
+        try:
+            return psycopg2.connect(_DATABASE_URL)
+        except psycopg2.OperationalError:
+            if i == attempts - 1:
+                raise
+            backoff = 0.2 * (2**i) + random.uniform(0, 0.1)
+            log.warning(
+                "Postgres connection failed (attempt %d/%d) — retrying in %.0fms",
+                i + 1,
+                attempts,
+                backoff * 1000,
+            )
+            time.sleep(backoff)
+
+
 @contextmanager
 def _connection():
     if _USE_PG:
-        conn = psycopg2.connect(_DATABASE_URL)
+        conn = _pg_connect()
         try:
             yield conn
             conn.commit()
